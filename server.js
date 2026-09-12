@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
-const PORT = 3500;
+const PORT = process.env.PORT || 3500;
 const BASE_DIR = __dirname;
 const CONFIG_PATH = path.join(BASE_DIR, 'config', 'config.json');
 

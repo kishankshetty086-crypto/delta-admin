@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Team Admin Monitor Dashboard</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- Lock Screen Overlay (Base64 Encrypted Authentication) -->
+  <div id="lock-screen">
+    <div class="lock-card">
+      <div class="lock-icon">🔒</div>
+      <h2 style="margin-bottom: 8px; font-weight: 700;">Admin Authentication</h2>
+      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 24px;">
+        Please enter the admin password to access the monitoring dashboard.
+      </p>
+
+      <div class="form-group">
+        <input type="password" id="lock-password-input" class="form-control" placeholder="Enter password (default: admin123)" autofocus>
+      </div>
+
+      <div id="lock-error-msg" style="color: var(--accent-rose); font-size: 0.8rem; margin-bottom: 14px; display: none;"></div>
+
+      <button id="lock-submit-btn" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 10px;">
+        🔓 Unlock Dashboard
+      </button>
+
+      <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 20px;">
+        Protected with Local Base64 Credentials
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <div class="app-container">
+
+    <!-- Top Header -->
+    <header class="top-header">
+      <div class="brand-section">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-title">
+          <h1>Team Admin Monitoring Suite</h1>
+          <p>Multi-Team Operations, Availability, Zoho Sheets & Cliq Broadcaster</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="live-badge">
+          <div class="live-pulse"></div>
+          <span id="live-clock">--:--:--</span>
+        </div>
+        <button id="header-settings-btn" class="btn btn-secondary btn-icon" title="Settings">
+          ⚙️
+        </button>
+        <button id="header-lock-btn" class="btn btn-secondary btn-icon" title="Lock App">
+          🔒
+        </button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-container">
+      <button class="tab-button active" data-tab="availability">
+        🟢 BA Availability
+        <span id="tab-avail-badge" class="tab-badge">Live</span>
+      </button>
+      <button class="tab-button" data-tab="frontline">
+        📊 Frontline Team Logs
+        <span class="tab-badge">Zoho Sheets</span>
+      </button>
+      <button class="tab-button" data-tab="tasks-today">
+        📋 Today's Zoho Tasks
+        <span class="tab-badge">Group</span>
+      </button>
+      <button class="tab-button" data-tab="tasks-pending">
+        ⏳ Pending by Assignee
+        <span class="tab-badge">Tasks</span>
+      </button>
+      <button class="tab-button" data-tab="settings">
+        ⚙️ Settings & Config
+      </button>
+    </nav>
+
+    <!-- TAB 1: BA AVAILABILITY MONITOR -->
+    <div id="tab-availability" class="tab-pane active">
+      <!-- Quick Stats -->
+      <div class="grid-4" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-blue);">👥</div>
+          <div class="stat-info">
+            <div id="stat-avail-total" class="stat-value">0</div>
+            <div class="stat-label">Total BAs</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">🟢</div>
+          <div class="stat-info">
+            <div id="stat-avail-escalation" class="stat-value" style="color: var(--accent-emerald);">0</div>
+            <div class="stat-label">Escalation / Available</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(244, 63, 94, 0.15); color: var(--accent-rose);">🔴</div>
+          <div class="stat-info">
+            <div id="stat-avail-notavailable" class="stat-value" style="color: var(--accent-rose);">0</div>
+            <div class="stat-label">Not Available</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(251, 191, 36, 0.15); color: var(--accent-amber);">⭐</div>
+          <div class="stat-info">
+            <div id="stat-avail-monitored" class="stat-value" style="color: var(--accent-amber);">0</div>
+            <div class="stat-label">Monitored Active</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Control Bar -->
+      <div class="control-bar">
+        <div class="control-group">
+          <input type="text" id="availability-search" class="form-control" style="width: 220px;" placeholder="🔍 Filter user or phone...">
+          
+          <label class="custom-checkbox">
+            <input type="checkbox" id="avail-filter-monitored">
+            <span>Show Monitored Only</span>
+          </label>
+        </div>
+
+        <div class="control-group" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-size: 0.84rem; color: var(--text-secondary); font-weight: 600;">Auto Interval:</span>
+          <select id="avail-interval-select" class="form-control" style="width: 125px; font-size: 0.82rem; padding: 4px 8px;">
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="180">3 minutes</option>
+            <option value="300" selected>5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="1800">30 minutes</option>
+            <option value="2700">45 minutes</option>
+            <option value="3600">60 mins (1 hr)</option>
+            <option value="custom">✏️ Custom...</option>
+          </select>
+
+          <div id="avail-custom-minutes-wrap" style="display: none; align-items: center; gap: 4px;">
+            <input type="number" id="avail-custom-minutes" class="form-control" min="1" max="1440" value="5" style="width: 70px; padding: 4px 8px; font-size: 0.8rem;" placeholder="Mins">
+            <span style="font-size: 0.8rem; color: var(--text-secondary);">mins</span>
+          </div>
+
+          <label class="custom-checkbox" title="If checked, each auto-poll cycle automatically broadcasts fresh update to Cliq #teamalpha">
+            <input type="checkbox" id="avail-auto-cliq-broadcast" checked>
+            <span style="color: var(--accent-emerald); font-weight: 600;">⚡ Auto-Send to Cliq</span>
+          </label>
+
+          <button id="avail-toggle-polling" class="btn btn-primary btn-sm">
+            ▶️ Start Auto-Polling
+          </button>
+
+          <button id="avail-fetch-btn" class="btn btn-secondary btn-sm">
+            🔄 Refresh Now
+          </button>
+
+          <div style="border-left: 1px solid var(--border-color); height: 24px; margin: 0 4px;"></div>
+
+          <label class="custom-checkbox" title="If checked, Cliq message will only include users with checkbox enabled">
+            <input type="checkbox" id="avail-cliq-monitored-only" checked>
+            <span>Monitored Only</span>
+          </label>
+
+          <button id="avail-send-cliq-btn" class="btn btn-success btn-sm">
+            💬 Broadcast to Cliq
+          </button>
+        </div>
+      </div>
+
+      <!-- Polling Status bar -->
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 4px;">
+        <span id="avail-countdown-text">Auto-polling paused</span>
+        <span>Auto-interval based request engine</span>
+      </div>
+      <div class="progress-bar-container" style="margin-bottom: 16px;">
+        <div id="avail-progress-bar" class="progress-bar"></div>
+      </div>
+
+      <!-- Table Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📋 BA Availability Live Data</span>
+          </div>
+          <span style="font-size: 0.78rem; color: var(--text-muted);">
+            Endpoint: <code style="color: var(--accent-blue);">deltabaavailability/api/availability/</code>
+          </span>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 50px; text-align: center;">Monitor</th>
+                <th>BA Name</th>
+                <th>Availability Status</th>
+                <th>Contact Number</th>
+                <th style="width: 130px;">Quick Action</th>
+              </tr>
+            </thead>
+            <tbody id="availability-table-body">
+              <tr>
+                <td colspan="5" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                  Click "Refresh Now" or "Start Auto-Polling" to load data.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <!-- TAB 2: FRONTLINE TEAM LOG SHEETS -->
+    <div id="tab-frontline" class="tab-pane">
+      <div class="control-bar">
+        <div class="control-group">
+          <span style="font-weight: 700; font-size: 0.95rem;">Frontline Sheets</span>
+          <span class="badge badge-escalation">Sheet: byske536c712d67f249cc9ac3d87a84bb71d9</span>
+        </div>
+
+        <div class="control-group">
+          <button id="frontline-sync-btn" class="btn btn-primary">
+            🔄 Refresh All Sheets
+          </button>
+          <button id="frontline-cliq-btn" class="btn btn-success">
+            💬 Broadcast Summary to Cliq
+          </button>
+          <button id="frontline-transfer-btn" class="btn btn-warning">
+            📦 Transfer Daily ➔ History Sheet
+          </button>
+        </div>
+      </div>
+
+      <!-- Configured Team Members Chips -->
+      <div class="card" style="padding: 14px 20px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);">User Worksheets:</span>
+            <div id="frontline-user-tags" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="text" id="new-frontline-user-input" class="form-control" style="width: 150px; padding: 5px 10px; font-size: 0.8rem;" placeholder="Add Sheet Name...">
+            <button id="add-frontline-user-btn" class="btn btn-secondary btn-sm">➕ Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Log Cards Grid -->
+      <div id="frontline-users-grid" class="grid-auto" style="margin-bottom: 24px;"></div>
+    </div>
+
+    <!-- TAB 3: TODAY'S ZOHO TASKS -->
+    <div id="tab-tasks-today" class="tab-pane">
+      <div class="control-bar">
+        <div class="control-group">
+          <span style="font-weight: 700; font-size: 0.95rem;">Today's Zoho Tasks</span>
+          <span id="tasks-group-badge" class="badge badge-escalation">Group: TEAM DELTA</span>
+        </div>
+
+        <div class="control-group" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="tasks-date-filter" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Creation Date:</label>
+            <input type="date" id="tasks-date-filter" class="form-control" style="padding: 4px 8px; font-size: 0.8rem; width: 140px;">
+            <button id="tasks-date-today-btn" class="btn btn-secondary btn-sm" style="padding: 4px 8px; font-size: 0.75rem;">Today</button>
+            <button id="tasks-date-prev-btn" class="btn btn-secondary btn-sm" style="padding: 4px 8px; font-size: 0.75rem;">Yesterday</button>
+          </div>
+          <button id="tasks-today-sync-btn" class="btn btn-primary btn-sm">
+            🔄 Refresh Tasks
+          </button>
+          <button id="tasks-today-cliq-btn" class="btn btn-success btn-sm">
+            💬 Broadcast Activity to Cliq
+          </button>
+        </div>
+      </div>
+
+      <!-- Live API Status Banner & Active Filter Notice -->
+      <div id="tasks-today-api-status" style="margin-bottom: 12px;"></div>
+
+      <div class="card" style="padding: 10px 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2);">
+        <div style="font-size: 0.82rem; color: var(--text-secondary);">
+          📅 Filtering Zoho Tasks by Creation Date: <strong id="tasks-active-date-display" style="color: var(--accent-blue);">Today</strong>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); display: flex; gap: 12px;">
+          <span>🟢 <strong>Closed:</strong> Created today & closed</span>
+          <span>⏳ <strong>In Progress:</strong> Active open</span>
+          <span>🟣 <strong>Open/Pending:</strong> Blank status / Client pending</span>
+        </div>
+      </div>
+
+      <div id="tasks-today-grid" class="grid-auto"></div>
+    </div>
+
+    <!-- TAB 4: PENDING TASKS BY ASSIGNEE -->
+    <div id="tab-tasks-pending" class="tab-pane">
+      <div class="control-bar">
+        <div class="control-group">
+          <span style="font-weight: 700; font-size: 0.95rem;">Pending / Open Tasks by Assignee</span>
+          <span class="badge badge-danger">All Non-Closed Tasks</span>
+        </div>
+
+        <div class="control-group">
+          <button id="tasks-pending-sync-btn" class="btn btn-primary">
+            🔄 Refresh
+          </button>
+          <button id="tasks-pending-cliq-btn" class="btn btn-danger">
+            🔔 Broadcast Pending to Cliq
+          </button>
+        </div>
+      </div>
+
+      <!-- Live API Status Banner -->
+      <div id="tasks-pending-api-status" style="margin-bottom: 12px;"></div>
+
+      <div class="card" style="padding: 10px 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(244, 63, 94, 0.05); border: 1px solid rgba(244, 63, 94, 0.2);">
+        <div style="font-size: 0.82rem; color: var(--text-secondary);">
+          📌 <strong>Status Interpretation:</strong> In Progress = Active Working Task | Blank Status = Client / Internal Pending
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); display: flex; gap: 12px;">
+          <span>⏳ <strong>In Progress:</strong> Active in-flight</span>
+          <span>🔴 <strong>Blank Status:</strong> Client / Internal Pending</span>
+        </div>
+      </div>
+
+      <div id="tasks-pending-grid" class="grid-auto"></div>
+    </div>
+
+    <!-- TAB 5: SETTINGS & CONFIGURATION -->
+    <div id="tab-settings" class="tab-pane">
+      <div class="grid-2">
+        <!-- Zoho API Credentials -->
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 16px;">
+            <span>🔑 Zoho API Credentials</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Client ID</label>
+            <input type="text" id="cfg-client-id" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Client Secret</label>
+            <input type="password" id="cfg-client-secret" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Refresh Token</label>
+            <input type="text" id="cfg-refresh-token" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">OAuth Token URL</label>
+            <input type="text" id="cfg-token-url" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Zoho Sheet API Base URL</label>
+            <input type="text" id="cfg-sheet-api-url" class="form-control">
+          </div>
+
+          <button id="test-token-btn" class="btn btn-secondary btn-sm">
+            ⚡ Test Token Refresh
+          </button>
+        </div>
+
+        <!-- Sheet IDs & Cliq Webhooks -->
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 16px;">
+            <span>📊 Zoho Sheets & Cliq Integration</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Frontline Daily Sheet ID</label>
+            <input type="text" id="cfg-daily-sheet-id" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Daily Sheet Reference Link</label>
+            <input type="text" id="cfg-daily-sheet-link" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">History Archive Sheet ID</label>
+            <input type="text" id="cfg-history-sheet-id" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">History Sheet Reference Link</label>
+            <input type="text" id="cfg-history-sheet-link" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Zoho Cliq Webhook URL</label>
+            <input type="text" id="cfg-cliq-webhook-url" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Availability API Endpoint</label>
+            <input type="text" id="cfg-avail-api-url" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Tasks Target Group Name</label>
+            <input type="text" id="cfg-target-group-name" class="form-control">
+          </div>
+
+          <div style="display: flex; gap: 10px;">
+            <button id="test-avail-btn" class="btn btn-secondary btn-sm">
+              ⚡ Test Availability API
+            </button>
+            <button id="test-cliq-btn" class="btn btn-secondary btn-sm">
+              ⚡ Test Cliq Webhook
+            </button>
+          </div>
+        </div>
+
+        <!-- Password Management -->
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 16px;">
+            <span>🔐 Admin Password (Base64 Encrypted)</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Current Password</label>
+            <input type="password" id="cfg-old-password" class="form-control" placeholder="Enter current password">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">New Password</label>
+            <input type="password" id="cfg-new-password" class="form-control" placeholder="Enter new password">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Confirm New Password</label>
+            <input type="password" id="cfg-confirm-password" class="form-control" placeholder="Repeat new password">
+          </div>
+
+          <button id="change-password-btn" class="btn btn-warning btn-sm">
+            🔒 Update Password
+          </button>
+        </div>
+
+        <!-- Backup & Save Settings -->
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 16px;">
+            <span>💾 Save & Backup Configuration</span>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 16px;">
+            All configuration parameters are stored locally in your browser and local configuration store.
+          </p>
+
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button id="save-settings-btn" class="btn btn-primary" style="padding: 10px;">
+              💾 Save Configuration Changes
+            </button>
+
+            <div style="display: flex; gap: 10px;">
+              <button id="export-config-btn" class="btn btn-secondary" style="flex: 1;">
+                ⬇️ Export JSON Config
+              </button>
+              <label class="btn btn-secondary" style="flex: 1; cursor: pointer; justify-content: center;">
+                ⬆️ Import JSON Config
+                <input type="file" id="import-config-input" accept=".json" style="display: none;">
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- CLIQ PREVIEW & EDIT MODAL -->
+  <div id="cliq-preview-modal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="cliq-modal-title">Broadcast to Zoho Cliq</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 10px;">
+          Review or customize message before broadcasting to the Cliq group:
+        </p>
+        <textarea id="cliq-message-textarea" class="form-control" rows="10" style="font-family: monospace; font-size: 0.85rem;"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Cancel</button>
+        <button id="cliq-modal-send-btn" class="btn btn-success">🚀 Send Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DAILY TO HISTORY TRANSFER MODAL -->
+  <div id="transfer-modal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>📦 Transfer Daily Logs ➔ History Sheet</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); border-radius: var(--radius-md); padding: 12px 16px; margin-bottom: 16px;">
+          <strong style="color: var(--accent-amber);">⚠️ Safety Guarantee:</strong>
+          <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+            1. Checks which user worksheets have data.<br>
+            2. Appends new rows to existing history worksheet (never deletes existing history).<br>
+            3. Clears daily worksheet rows only after append confirmation.
+          </p>
+        </div>
+
+        <div id="transfer-log-console" class="console-box">Ready to transfer...</div>
+        <div id="transfer-fallback-actions" style="display: none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Close</button>
+        <button id="transfer-confirm-btn" class="btn btn-warning">🚀 Start Transfer & Archive</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FRONTLINE TASK DETAILS MODAL -->
+  <div id="frontline-task-modal" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 750px;">
+      <div class="modal-header">
+        <h3 id="frontline-modal-title">📋 Frontline Tasks for User</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 480px; overflow-y: auto;">
+        <div id="frontline-modal-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GROUP TASK DETAILS MODAL (ZOHO TO-DO) -->
+  <div id="group-task-modal" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 800px;">
+      <div class="modal-header">
+        <h3 id="group-task-modal-title">📋 Live Zoho To-Do Tasks</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 480px; overflow-y: auto;">
+        <div id="group-task-modal-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="config/config.js"></script>
+  <script src="assets/js/zoho-api.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>

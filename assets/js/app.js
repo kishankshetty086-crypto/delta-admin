@@ -165,7 +165,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     switchTab("settings");
   });
 
-  // TAB 1: BA AVAILABILITY MONITOR
+  // TAB 1: BA AVAILABILITY MONITOR & 24/7 BACKEND POLLER
   const availTableBody = document.getElementById("availability-table-body");
   const availSearchInput = document.getElementById("availability-search");
   const availIntervalSelect = document.getElementById("avail-interval-select");
@@ -173,14 +173,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   const availCustomMinutesInput = document.getElementById("avail-custom-minutes");
   const availAutoCliqBroadcastCheckbox = document.getElementById("avail-auto-cliq-broadcast");
   const availTogglePollingBtn = document.getElementById("avail-toggle-polling");
+  const availTriggerNowBtn = document.getElementById("avail-trigger-now-btn");
   const availFetchBtn = document.getElementById("avail-fetch-btn");
   const availSendCliqBtn = document.getElementById("avail-send-cliq-btn");
+  const availLogsBtn = document.getElementById("avail-logs-btn");
   const availProgressBar = document.getElementById("avail-progress-bar");
-  const availCountdownText = document.getElementById("avail-countdown-text");
+  const pollerStatusBadge = document.getElementById("poller-status-badge");
+  const pollerNextTimeText = document.getElementById("poller-next-time-text");
+  const pollerLastTimeText = document.getElementById("poller-last-time-text");
+  const pollerLogsModal = document.getElementById("poller-logs-modal");
+  const pollerLogsContent = document.getElementById("poller-logs-content");
 
-  async function fetchAvailabilityData() {
+  let backendPollerInfo = {
+    isRunning: true,
+    intervalSec: 300,
+    autoCliqBroadcast: true,
+    remainingSec: 0,
+    history: []
+  };
+
+  async function fetchAvailabilityData(silent = false) {
     try {
-      if (availFetchBtn) {
+      if (availFetchBtn && !silent) {
         availFetchBtn.disabled = true;
         availFetchBtn.innerHTML = `⏳ Fetching...`;
       }
@@ -190,13 +204,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       renderAvailabilityTable();
       updateAvailabilityStats();
-      showToast(`Availability refreshed (${state.availabilityData.length} records).`, "success");
+      if (!silent) {
+        showToast(`Availability refreshed (${state.availabilityData.length} records).`, "success");
+      }
     } catch (err) {
-      showToast(`Availability error: ${err.message}`, "error");
+      if (!silent) {
+        showToast(`Availability error: ${err.message}`, "error");
+      }
     } finally {
       if (availFetchBtn) {
         availFetchBtn.disabled = false;
-        availFetchBtn.innerHTML = `🔄 Refresh Now`;
+        availFetchBtn.innerHTML = `🔄 Refresh UI`;
       }
     }
   }
@@ -218,65 +236,60 @@ document.addEventListener("DOMContentLoaded", async () => {
       availTableBody.innerHTML = `
         <tr>
           <td colspan="5" style="text-align: center; padding: 28px; color: var(--text-muted);">
-            No matching BA availability records found.
+            No BA availability records found. Click "Refresh UI" to fetch live data.
           </td>
         </tr>
       `;
       return;
     }
 
-    availTableBody.innerHTML = filtered.map(user => {
-      const isMonitored = state.monitoredUsers.has(user.name);
-      let badgeClass = "badge-muted";
-      let statusIcon = "⚪";
+    availTableBody.innerHTML = filtered.map(u => {
+      const isMonitored = state.monitoredUsers.has(u.name);
+      let statusBadge = "badge-muted";
+      let statusText = u.availability;
 
-      if (user.isEscalation) {
-        badgeClass = "badge-escalation";
-        statusIcon = "🟢";
-      } else if (user.isAvailable) {
-        badgeClass = "badge-success";
-        statusIcon = "🟢";
-      } else if (user.availability.toLowerCase().includes("not available")) {
-        badgeClass = "badge-danger";
-        statusIcon = "🔴";
+      if (u.isEscalation) {
+        statusBadge = "badge-escalation";
+      } else if (u.isAvailable) {
+        statusBadge = "badge-success";
+      } else if (u.availability.toLowerCase().includes("not available")) {
+        statusBadge = "badge-danger";
       } else {
-        badgeClass = "badge-warning";
-        statusIcon = "🟡";
+        statusBadge = "badge-warning";
       }
 
       return `
         <tr>
-          <td style="width: 50px; text-align: center;">
-            <input type="checkbox" class="user-monitor-checkbox" data-user="${user.name}" ${isMonitored ? "checked" : ""}>
+          <td style="text-align: center;">
+            <input type="checkbox" class="monitor-user-checkbox" data-user="${u.name}" ${isMonitored ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
           </td>
           <td>
-            <strong>${user.name}</strong>
-            ${isMonitored ? `<span class="badge badge-warning" style="margin-left: 6px; font-size: 0.65rem;">MONITORED</span>` : ""}
+            <strong>${u.name}</strong>
           </td>
           <td>
-            <span class="badge ${badgeClass}">${statusIcon} ${user.availability}</span>
+            <span class="badge ${statusBadge}">${statusText}</span>
           </td>
           <td>
-            <a href="tel:${user.phone}" style="color: var(--accent-blue); text-decoration: none; font-weight: 600;">📞 ${user.phone || "N/A"}</a>
+            <span style="font-family: monospace; color: var(--text-secondary); font-size: 0.82rem;">${u.phone || '—'}</span>
           </td>
           <td>
-            <button class="btn btn-secondary btn-sm notify-user-single-btn" data-user="${user.name}" data-status="${user.availability}" data-phone="${user.phone}">
-              💬 Ping Cliq
+            <button class="btn btn-secondary btn-sm notify-user-single-btn" data-user="${u.name}" data-status="${statusText}" data-phone="${u.phone}" style="font-size: 0.72rem; padding: 3px 8px;">
+              💬 Ping Status
             </button>
           </td>
         </tr>
       `;
     }).join("");
 
-    document.querySelectorAll(".user-monitor-checkbox").forEach(cb => {
-      cb.addEventListener("change", (e) => {
-        const username = e.target.dataset.user;
+    document.querySelectorAll(".monitor-user-checkbox").forEach(cb => {
+      cb.addEventListener("change", async (e) => {
+        const name = e.target.dataset.user;
         if (e.target.checked) {
-          state.monitoredUsers.add(username);
+          state.monitoredUsers.add(name);
         } else {
-          state.monitoredUsers.delete(username);
+          state.monitoredUsers.delete(name);
         }
-        saveMonitoredUsersConfig();
+        await saveMonitoredUsersConfig();
         updateAvailabilityStats();
       });
     });
@@ -304,10 +317,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("stat-avail-monitored").textContent = monitoredCount;
   }
 
-  function saveMonitoredUsersConfig() {
+  async function saveAppConfig() {
+    localStorage.setItem("team_admin_monitor_config", JSON.stringify(window.APP_CONFIG));
+    try {
+      if (window.location.protocol.startsWith('http')) {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(window.APP_CONFIG)
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to persist config to server:", e);
+    }
+  }
+
+  async function saveMonitoredUsersConfig() {
     if (!window.APP_CONFIG.availability) window.APP_CONFIG.availability = {};
     window.APP_CONFIG.availability.monitoredUsers = Array.from(state.monitoredUsers);
-    localStorage.setItem("team_admin_monitor_config", JSON.stringify(window.APP_CONFIG));
+    await saveAppConfig();
+    showToast("Monitored users updated & persisted to server config.", "info");
   }
 
   function getEffectiveIntervalSeconds() {
@@ -352,71 +381,132 @@ document.addEventListener("DOMContentLoaded", async () => {
     return message.trim();
   }
 
-  async function executePollCycle() {
-    await fetchAvailabilityData();
-    const shouldAutoSendCliq = availAutoCliqBroadcastCheckbox?.checked;
-    if (shouldAutoSendCliq) {
-      const onlyMonitored = document.getElementById("avail-cliq-monitored-only")?.checked;
-      const cliqMsg = generateAvailabilityCliqMessage(onlyMonitored);
-      if (cliqMsg) {
-        try {
-          await sendCliqNotification(cliqMsg);
-          showToast(`⚡ Auto-poll: Fresh data fetched & broadcasted to Cliq at ${new Date().toLocaleTimeString()}!`, "success");
-        } catch (err) {
-          console.warn("Auto Cliq broadcast failed:", err);
-          showToast(`⚠️ Auto Cliq broadcast error: ${err.message}`, "warning");
+  // Synchronize with 24/7 Backend Poller
+  async function syncBackendPollerStatus() {
+    try {
+      const apiBase = window.location.protocol.startsWith('http') ? '' : 'http://localhost:3500';
+      const res = await fetch(`${apiBase}/api/availability/poller-status`);
+      if (res.ok) {
+        const data = await res.json();
+        backendPollerInfo = data;
+        renderBackendPollerUI();
+      }
+    } catch (e) {
+      console.warn("Could not sync backend poller status:", e);
+    }
+  }
+
+  function renderBackendPollerUI() {
+    const isRunning = backendPollerInfo.isRunning;
+    const remainingSec = backendPollerInfo.remainingSec || 0;
+    const intervalSec = backendPollerInfo.intervalSec || 300;
+    const nextRunTime = backendPollerInfo.nextRunTime;
+    const lastRunTime = backendPollerInfo.lastRunTime;
+
+    if (pollerStatusBadge) {
+      if (isRunning) {
+        pollerStatusBadge.className = "badge badge-success";
+        pollerStatusBadge.innerHTML = "🟢 Backend 24/7 Poller: Active";
+      } else {
+        pollerStatusBadge.className = "badge badge-warning";
+        pollerStatusBadge.innerHTML = "⏸️ Backend Poller: Paused";
+      }
+    }
+
+    if (availTogglePollingBtn) {
+      if (isRunning) {
+        availTogglePollingBtn.className = "btn btn-danger btn-sm";
+        availTogglePollingBtn.innerHTML = `⏸️ Pause Backend Poller`;
+      } else {
+        availTogglePollingBtn.className = "btn btn-primary btn-sm";
+        availTogglePollingBtn.innerHTML = `▶️ Start Backend Poller`;
+      }
+    }
+
+    if (pollerNextTimeText) {
+      if (isRunning && nextRunTime) {
+        const timeObj = new Date(nextRunTime);
+        const timeFormatted = timeObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        pollerNextTimeText.textContent = `in ${formatCountdown(remainingSec)} (at ${timeFormatted})`;
+      } else {
+        pollerNextTimeText.textContent = "Paused (No trigger scheduled)";
+      }
+    }
+
+    if (pollerLastTimeText) {
+      if (lastRunTime) {
+        const lastObj = new Date(lastRunTime);
+        const lastFormatted = lastObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const badgeColor = backendPollerInfo.lastStatus === 'success' ? 'var(--accent-emerald)' : 'var(--accent-amber)';
+        pollerLastTimeText.innerHTML = `<span style="color: ${badgeColor}; font-weight: 600;">${lastFormatted} (${backendPollerInfo.lastStatus || 'ok'})</span>`;
+      } else {
+        pollerLastTimeText.textContent = "—";
+      }
+    }
+
+    if (availProgressBar) {
+      if (isRunning && intervalSec > 0) {
+        const pct = Math.min(100, Math.max(0, ((intervalSec - remainingSec) / intervalSec) * 100));
+        availProgressBar.style.width = `${pct}%`;
+      } else {
+        availProgressBar.style.width = "0%";
+      }
+    }
+  }
+
+  async function controlBackendPoller(action, extraPayload = {}) {
+    try {
+      const apiBase = window.location.protocol.startsWith('http') ? '' : 'http://localhost:3500';
+      const intervalSec = getEffectiveIntervalSeconds();
+      const autoCliqBroadcast = availAutoCliqBroadcastCheckbox?.checked ?? true;
+      const cliqMonitoredOnly = document.getElementById("avail-cliq-monitored-only")?.checked ?? true;
+
+      const payload = {
+        action: action,
+        intervalSec: intervalSec,
+        autoCliqBroadcast: autoCliqBroadcast,
+        cliqMonitoredOnly: cliqMonitoredOnly,
+        ...extraPayload
+      };
+
+      const res = await fetch(`${apiBase}/api/availability/poller-control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        backendPollerInfo = data;
+        renderBackendPollerUI();
+        if (action === 'trigger_now') {
+          showToast("⚡ Triggered backend poller cycle & Cliq broadcast!", "success");
+          setTimeout(() => fetchAvailabilityData(true), 1500);
+        } else if (action === 'start' || action === 'resume') {
+          showToast(`Backend 24/7 poller started (every ${formatCountdown(intervalSec)}).`, "success");
+        } else if (action === 'pause') {
+          showToast("Backend poller paused.", "info");
+        } else {
+          showToast("Poller preferences updated on server.", "info");
         }
       }
+    } catch (err) {
+      showToast(`Poller control error: ${err.message}`, "error");
+    }
+  }
+
+  // Poller control button listeners
+  availTogglePollingBtn?.addEventListener("click", () => {
+    if (backendPollerInfo.isRunning) {
+      controlBackendPoller("pause");
     } else {
-      showToast(`🔄 Auto-poll: Fresh data fetched at ${new Date().toLocaleTimeString()}.`, "info");
+      controlBackendPoller("start");
     }
-  }
+  });
 
-  function startAutoPolling() {
-    state.isPolling = true;
-    const intervalSec = getEffectiveIntervalSeconds();
-    state.pollingCountdown = intervalSec;
-
-    availTogglePollingBtn.classList.remove("btn-primary");
-    availTogglePollingBtn.classList.add("btn-danger");
-    availTogglePollingBtn.innerHTML = `⏹️ Stop Polling (${formatCountdown(intervalSec)})`;
-
-    executePollCycle();
-
-    clearInterval(state.countdownInterval);
-    state.countdownInterval = setInterval(() => {
-      state.pollingCountdown--;
-      const currentInterval = getEffectiveIntervalSeconds();
-      const shouldCliq = availAutoCliqBroadcastCheckbox?.checked;
-
-      if (availCountdownText) {
-        availCountdownText.textContent = shouldCliq 
-          ? `Next update & Cliq broadcast in ${formatCountdown(state.pollingCountdown)}`
-          : `Next update in ${formatCountdown(state.pollingCountdown)}`;
-      }
-      if (availProgressBar) {
-        const pct = Math.min(100, Math.max(0, ((currentInterval - state.pollingCountdown) / currentInterval) * 100));
-        availProgressBar.style.width = `${pct}%`;
-      }
-
-      if (state.pollingCountdown <= 0) {
-        state.pollingCountdown = currentInterval;
-        executePollCycle();
-      }
-    }, 1000);
-  }
-
-  function stopAutoPolling() {
-    state.isPolling = false;
-    clearInterval(state.countdownInterval);
-    if (availTogglePollingBtn) {
-      availTogglePollingBtn.classList.remove("btn-danger");
-      availTogglePollingBtn.classList.add("btn-primary");
-      availTogglePollingBtn.innerHTML = `▶️ Start Auto-Polling`;
-    }
-    if (availCountdownText) availCountdownText.textContent = "Auto-polling paused";
-    if (availProgressBar) availProgressBar.style.width = "0%";
-  }
+  availTriggerNowBtn?.addEventListener("click", () => {
+    controlBackendPoller("trigger_now");
+  });
 
   availIntervalSelect?.addEventListener("change", (e) => {
     const isCustom = e.target.value === "custom";
@@ -424,33 +514,88 @@ document.addEventListener("DOMContentLoaded", async () => {
       availCustomMinutesWrap.style.display = isCustom ? "flex" : "none";
       if (isCustom && availCustomMinutesInput) availCustomMinutesInput.focus();
     }
-    if (state.isPolling) {
-      const newInterval = getEffectiveIntervalSeconds();
-      state.pollingCountdown = newInterval;
-      availTogglePollingBtn.innerHTML = `⏹️ Stop Polling (${formatCountdown(newInterval)})`;
-      showToast(`Auto-polling interval updated to ${formatCountdown(newInterval)}.`, "info");
+    controlBackendPoller("update");
+  });
+
+  availCustomMinutesInput?.addEventListener("change", () => {
+    if (availIntervalSelect?.value === "custom") {
+      controlBackendPoller("update");
     }
   });
 
-  availCustomMinutesInput?.addEventListener("input", () => {
-    if (state.isPolling && availIntervalSelect?.value === "custom") {
-      const newInterval = getEffectiveIntervalSeconds();
-      state.pollingCountdown = newInterval;
-      availTogglePollingBtn.innerHTML = `⏹️ Stop Polling (${formatCountdown(newInterval)})`;
-    }
+  availAutoCliqBroadcastCheckbox?.addEventListener("change", () => {
+    controlBackendPoller("update");
   });
 
-  availTogglePollingBtn?.addEventListener("click", () => {
-    if (state.isPolling) {
-      stopAutoPolling();
-      showToast("Auto-polling paused.", "info");
+  document.getElementById("avail-cliq-monitored-only")?.addEventListener("change", () => {
+    controlBackendPoller("update");
+  });
+
+  availLogsBtn?.addEventListener("click", () => {
+    if (!pollerLogsModal || !pollerLogsContent) return;
+    const history = backendPollerInfo.history || [];
+
+    if (history.length === 0) {
+      pollerLogsContent.innerHTML = `
+        <div style="text-align: center; padding: 24px; color: var(--text-muted);">
+          No execution log history yet. As the backend poller runs 24/7, history will be itemized here.
+        </div>
+      `;
     } else {
-      startAutoPolling();
-      const intervalSec = getEffectiveIntervalSeconds();
-      const shouldCliq = availAutoCliqBroadcastCheckbox?.checked;
-      showToast(`Auto-polling started (every ${formatCountdown(intervalSec)}${shouldCliq ? ' with auto Cliq broadcast' : ''}).`, "success");
+      pollerLogsContent.innerHTML = `
+        <div style="margin-bottom: 10px; font-size: 0.8rem; color: var(--text-secondary);">
+          Showing the last ${history.length} server-side background execution cycles:
+        </div>
+        <table class="data-table" style="font-size: 0.78rem;">
+          <thead>
+            <tr>
+              <th style="width: 70px;">Status</th>
+              <th>Timestamp</th>
+              <th>Trigger Type</th>
+              <th>Server Execution Log</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${history.map(h => {
+              const isSuccess = h.status === 'success';
+              const badge = isSuccess ? 'badge-success' : 'badge-danger';
+              const time = new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+              return `
+                <tr>
+                  <td><span class="badge ${badge}">${h.status}</span></td>
+                  <td style="white-space: nowrap; font-family: monospace;">${time}</td>
+                  <td><span class="badge badge-muted">${h.triggerSource || 'scheduled'}</span></td>
+                  <td style="color: var(--text-secondary); font-family: monospace; font-size: 0.75rem;">${h.log || '—'}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      `;
     }
+
+    pollerLogsModal.classList.add("active");
   });
+
+  // Client-side 1s heartbeat to update countdown smoothly
+  setInterval(() => {
+    if (backendPollerInfo.isRunning && backendPollerInfo.remainingSec > 0) {
+      backendPollerInfo.remainingSec--;
+      renderBackendPollerUI();
+
+      if (backendPollerInfo.remainingSec <= 0) {
+        // Server cycle is executing; sync status & refresh data
+        setTimeout(() => {
+          syncBackendPollerStatus();
+          fetchAvailabilityData(true);
+        }, 1500);
+      }
+    }
+  }, 1000);
+
+  // Sync with backend every 10 seconds to ensure time drift stays exact
+  setInterval(syncBackendPollerStatus, 10000);
 
   availFetchBtn?.addEventListener("click", fetchAvailabilityData);
   availSearchInput?.addEventListener("input", renderAvailabilityTable);
@@ -1638,6 +1783,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function initDashboard() {
     renderFrontlineUserTags();
     loadSettingsForm();
+    await syncBackendPollerStatus();
     fetchAvailabilityData();
     fetchFrontlineData();
     await fetchGroupTasksData();

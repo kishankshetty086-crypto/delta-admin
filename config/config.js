@@ -14,7 +14,7 @@ window.DEFAULT_CONFIG = {
   },
   "availability": {
     "apiUrl": "https://madhava.kambala.co.in/deltabaavailability/api/availability/",
-    "defaultIntervalSec": 30,
+    "defaultIntervalSec": 300,
     "monitoredUsers": [
       "Sakil Raj",
       "Karthik",
@@ -23,7 +23,9 @@ window.DEFAULT_CONFIG = {
       "Puneeth",
       "Krathika"
     ],
-    "autoNotifyOnStatusChange": false
+    "autoNotifyOnStatusChange": false,
+    "autoCliqBroadcast": true,
+    "cliqMonitoredOnly": true
   },
   "frontline": {
     "dailySheetId": "byske536c712d67f249cc9ac3d87a84bb71d9",

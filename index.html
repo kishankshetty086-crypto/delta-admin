@@ -129,7 +129,7 @@
         </div>
 
         <div class="control-group" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-          <span style="font-size: 0.84rem; color: var(--text-secondary); font-weight: 600;">Auto Interval:</span>
+          <span style="font-size: 0.84rem; color: var(--text-secondary); font-weight: 600;">Interval:</span>
           <select id="avail-interval-select" class="form-control" style="width: 125px; font-size: 0.82rem; padding: 4px 8px;">
             <option value="10">10 seconds</option>
             <option value="30">30 seconds</option>
@@ -150,17 +150,21 @@
             <span style="font-size: 0.8rem; color: var(--text-secondary);">mins</span>
           </div>
 
-          <label class="custom-checkbox" title="If checked, each auto-poll cycle automatically broadcasts fresh update to Cliq #teamalpha">
+          <label class="custom-checkbox" title="If checked, backend auto-poll cycle automatically broadcasts fresh update to Cliq #teamalpha 24/7">
             <input type="checkbox" id="avail-auto-cliq-broadcast" checked>
             <span style="color: var(--accent-emerald); font-weight: 600;">⚡ Auto-Send to Cliq</span>
           </label>
 
           <button id="avail-toggle-polling" class="btn btn-primary btn-sm">
-            ▶️ Start Auto-Polling
+            ▶️ Start Backend Poller
+          </button>
+
+          <button id="avail-trigger-now-btn" class="btn btn-warning btn-sm" title="Trigger instant background fetch and Cliq broadcast">
+            ⚡ Trigger & Send Now
           </button>
 
           <button id="avail-fetch-btn" class="btn btn-secondary btn-sm">
-            🔄 Refresh Now
+            🔄 Refresh UI
           </button>
 
           <div style="border-left: 1px solid var(--border-color); height: 24px; margin: 0 4px;"></div>
@@ -176,13 +180,27 @@
         </div>
       </div>
 
-      <!-- Polling Status bar -->
-      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 4px;">
-        <span id="avail-countdown-text">Auto-polling paused</span>
-        <span>Auto-interval based request engine</span>
-      </div>
-      <div class="progress-bar-container" style="margin-bottom: 16px;">
-        <div id="avail-progress-bar" class="progress-bar"></div>
+      <!-- Backend 24/7 Poller Status Engine Card -->
+      <div class="card" style="padding: 12px 18px; margin-bottom: 16px; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.25);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span id="poller-status-badge" class="badge badge-success" style="font-size: 0.8rem; padding: 5px 10px;">🟢 Backend 24/7 Poller: Active</span>
+            <span style="font-size: 0.82rem; color: var(--text-secondary);">
+              🕒 Next Server Trigger: <strong id="poller-next-time-text" style="color: var(--accent-blue);">calculating...</strong>
+            </span>
+            <span style="font-size: 0.78rem; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 8px;">
+              Last Trigger: <span id="poller-last-time-text">—</span>
+            </span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="avail-logs-btn" class="btn btn-secondary btn-sm" style="font-size: 0.75rem; padding: 3px 8px;">
+              📜 View Server Poller Logs
+            </button>
+          </div>
+        </div>
+        <div class="progress-bar-container" style="margin-top: 10px; height: 4px;">
+          <div id="avail-progress-bar" class="progress-bar" style="width: 0%;"></div>
+        </div>
       </div>
 
       <!-- Table Card -->
@@ -192,7 +210,7 @@
             <span>📋 BA Availability Live Data</span>
           </div>
           <span style="font-size: 0.78rem; color: var(--text-muted);">
-            Endpoint: <code style="color: var(--accent-blue);">deltabaavailability/api/availability/</code>
+            Backend Poller: <code style="color: var(--accent-emerald);">Runs 24/7 in Node.js independent of browser state</code>
           </span>
         </div>
 
@@ -550,6 +568,22 @@
       </div>
       <div class="modal-body" style="max-height: 480px; overflow-y: auto;">
         <div id="group-task-modal-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BACKEND POLLER LOGS MODAL -->
+  <div id="poller-logs-modal" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3>📜 24/7 Backend Poller Activity Logs</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 480px; overflow-y: auto;">
+        <div id="poller-logs-content"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close-btn">Close</button>

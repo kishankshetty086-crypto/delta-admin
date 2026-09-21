@@ -67,7 +67,16 @@ function formatAvailabilityCliqMessage(availData, monitoredUsers, onlyMonitored 
   if (usersToSend.length === 0) return null;
 
   const now = new Date();
-  const timeString = now.toLocaleDateString('en-US') + ' ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const timeString = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  });
   let message = `📢 *BA Availability Status Update*\n🕒 *Timestamp:* ${timeString}\n\n`;
 
   usersToSend.forEach(u => {
@@ -109,14 +118,17 @@ async function runBackendPollCycle(triggerSource = 'scheduled') {
       }
 
       pollerState.lastStatus = 'success';
-      pollerState.lastLog = `[${startTime.toLocaleTimeString()}] Fresh BA data fetched. Cliq: ${cliqResult} (${triggerSource})`;
+      const logTimeStr = startTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+      pollerState.lastLog = `[${logTimeStr}] Fresh BA data fetched. Cliq: ${cliqResult} (${triggerSource})`;
     } else {
       pollerState.lastStatus = 'api_error';
-      pollerState.lastLog = `[${startTime.toLocaleTimeString()}] Availability API returned HTTP ${response.status}`;
+      const logTimeStr = startTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+      pollerState.lastLog = `[${logTimeStr}] Availability API returned HTTP ${response.status}`;
     }
   } catch (err) {
     pollerState.lastStatus = 'error';
-    pollerState.lastLog = `[${startTime.toLocaleTimeString()}] Error: ${err.message}`;
+    const logTimeStr = startTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+    pollerState.lastLog = `[${logTimeStr}] Error: ${err.message}`;
   }
 
   pollerState.history.unshift({

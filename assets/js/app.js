@@ -367,7 +367,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (usersToSend.length === 0) return null;
 
     const now = new Date();
-    const timeString = now.toLocaleDateString() + " " + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timeString = now.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
     
     let message = `📢 *BA Availability Status Update*\n🕒 *Timestamp:* ${timeString}\n\n`;
     usersToSend.forEach(u => {

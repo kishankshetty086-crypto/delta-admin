@@ -3,21 +3,31 @@
  */
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Try loading live configuration from server or localStorage or DEFAULT_CONFIG
-  let activeConfig = window.DEFAULT_CONFIG || {};
+  // Try loading live configuration from server and localStorage, falling back to window.DEFAULT_CONFIG
+  let activeConfig = JSON.parse(JSON.stringify(window.DEFAULT_CONFIG || {}));
+
+  // 1. Check localStorage first
+  try {
+    const savedLocal = localStorage.getItem("team_admin_monitor_config");
+    if (savedLocal) {
+      const parsedLocal = JSON.parse(savedLocal);
+      activeConfig = { ...activeConfig, ...parsedLocal, zoho: { ...activeConfig.zoho, ...parsedLocal.zoho }, availability: { ...activeConfig.availability, ...parsedLocal.availability }, frontline: { ...activeConfig.frontline, ...parsedLocal.frontline }, tasks: { ...activeConfig.tasks, ...parsedLocal.tasks }, cliq: { ...activeConfig.cliq, ...parsedLocal.cliq } };
+    }
+  } catch (e) {}
+
+  // 2. Query server for authoritative live configuration
   try {
     if (window.location.protocol.startsWith('http')) {
       const serverCfgRes = await fetch('/api/config');
       if (serverCfgRes.ok) {
         const serverCfg = await serverCfgRes.json();
-        if (serverCfg && serverCfg.zoho) activeConfig = serverCfg;
+        if (serverCfg && typeof serverCfg === 'object') {
+          activeConfig = { ...activeConfig, ...serverCfg, zoho: { ...activeConfig.zoho, ...serverCfg.zoho }, availability: { ...activeConfig.availability, ...serverCfg.availability }, frontline: { ...activeConfig.frontline, ...serverCfg.frontline }, tasks: { ...activeConfig.tasks, ...serverCfg.tasks }, cliq: { ...activeConfig.cliq, ...serverCfg.cliq } };
+        }
       }
-    } else {
-      const savedConfig = localStorage.getItem("team_admin_monitor_config");
-      if (savedConfig) activeConfig = JSON.parse(savedConfig);
     }
   } catch (e) {
-    console.warn("Using fallback config:", e);
+    console.warn("Using local active config:", e);
   }
 
   window.APP_CONFIG = activeConfig;
@@ -461,6 +471,31 @@ document.addEventListener("DOMContentLoaded", async () => {
         availProgressBar.style.width = "0%";
       }
     }
+
+    // Keep Poller Control Bar controls in sync with active backend settings (only when not actively typing)
+    if (availIntervalSelect && document.activeElement !== availIntervalSelect && document.activeElement !== availCustomMinutesInput) {
+      const knownValues = ["10", "30", "60", "120", "180", "300", "600", "900", "1800", "2700", "3600"];
+      const strSec = String(intervalSec);
+      if (knownValues.includes(strSec)) {
+        availIntervalSelect.value = strSec;
+        if (availCustomMinutesWrap) availCustomMinutesWrap.style.display = "none";
+      } else {
+        availIntervalSelect.value = "custom";
+        if (availCustomMinutesWrap) {
+          availCustomMinutesWrap.style.display = "flex";
+          if (availCustomMinutesInput) availCustomMinutesInput.value = Math.max(1, Math.round(intervalSec / 60));
+        }
+      }
+    }
+
+    if (availAutoCliqBroadcastCheckbox && document.activeElement !== availAutoCliqBroadcastCheckbox) {
+      availAutoCliqBroadcastCheckbox.checked = backendPollerInfo.autoCliqBroadcast ?? true;
+    }
+
+    const availMonitoredOnlyEl = document.getElementById("avail-cliq-monitored-only");
+    if (availMonitoredOnlyEl && document.activeElement !== availMonitoredOnlyEl) {
+      availMonitoredOnlyEl.checked = backendPollerInfo.cliqMonitoredOnly ?? true;
+    }
   }
 
   async function controlBackendPoller(action, extraPayload = {}) {
@@ -469,6 +504,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       const intervalSec = getEffectiveIntervalSeconds();
       const autoCliqBroadcast = availAutoCliqBroadcastCheckbox?.checked ?? true;
       const cliqMonitoredOnly = document.getElementById("avail-cliq-monitored-only")?.checked ?? true;
+
+      // Update in-memory active config as well
+      if (!window.APP_CONFIG.availability) window.APP_CONFIG.availability = {};
+      window.APP_CONFIG.availability.defaultIntervalSec = intervalSec;
+      window.APP_CONFIG.availability.autoCliqBroadcast = autoCliqBroadcast;
+      window.APP_CONFIG.availability.cliqMonitoredOnly = cliqMonitoredOnly;
+      if (action === 'start' || action === 'resume') window.APP_CONFIG.availability.autoPollerActive = true;
+      if (action === 'pause') window.APP_CONFIG.availability.autoPollerActive = false;
+      localStorage.setItem("team_admin_monitor_config", JSON.stringify(window.APP_CONFIG));
 
       const payload = {
         action: action,

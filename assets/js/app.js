@@ -996,7 +996,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             });
 
             const rowText = Object.values(colMap).join(' ').toLowerCase();
-            if (!rowText.includes('faq list') && !rowText.includes('task summary')) {
+            // Only skip navigation/FAQ buttons row if present below header
+            if (!rowText.includes('faq list') && !rowText.includes('raise  zoho  task') && !rowText.includes('availability')) {
               // Extract row cells in order: Date, Task, Description, Status, Escalated To, Remarks, Time
               const rowData = [
                 colMap[1] || '',
@@ -1007,7 +1008,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 colMap[6] || '',
                 colMap[7] || ''
               ];
-              if (rowData.some(v => v.length > 0)) {
+              // Valid row must have at least task or description or status or remarks
+              if (rowData[1] || rowData[2] || rowData[3] || rowData[4] || rowData[5]) {
                 validRows.push(rowData);
               }
             }
@@ -1023,21 +1025,42 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         logTransfer(`📥 [${username.trim()}]: Found ${validRows.length} task rows to copy.`);
 
-        // Determine exact task column header name for this worksheet
-        const cleanName = username.trim().toUpperCase();
-        const taskHeaderName = (cleanName === 'PUNEETH' || cleanName === 'KRATHIKA') ? 'TASK ' : 'TASK  Summary - Client';
+        // Step 1: Read actual Row 2 headers from the target History Worksheet for dynamic 100% exact matching
+        let historyHeaderMap = {};
+        try {
+          const histSheetData = await window.zohoClient.getWorksheetRecords(historySheetId, username);
+          const histRange = histSheetData?.range_details || [];
+          const histR2 = histRange.find(r => r.row_index === 2);
+          if (histR2 && histR2.row_details) {
+            histR2.row_details.forEach(c => {
+              historyHeaderMap[c.column_index] = c.content;
+            });
+          }
+        } catch (hErr) {
+          logTransfer(`ℹ️ Using default header fallback for [${username.trim()}]...`);
+        }
 
-        // Format records as objects matching Row 2 headers
-        const recordObjects = validRows.map(row => ({
-          'Date': row[0] || '',
-          [taskHeaderName]: row[1] || '',
-          'Description': row[2] || '',
-          'STATUS ': row[3] || '',
-          'Escallated to ': row[4] || '',
-          'Remarks': row[5] || ''
-        }));
+        // Exact column names from history row 2 or fallback to exact sheet spacing
+        const col1Header = historyHeaderMap[1] || 'Date';
+        const col2Header = historyHeaderMap[2] || (username.trim().toUpperCase() === 'PUNEETH' || username.trim().toUpperCase() === 'KRATHIKA' ? '                             TASK ' : '                     TASK  Summary - Client');
+        const col3Header = historyHeaderMap[3] || 'Description';
+        const col4Header = historyHeaderMap[4] || 'STATUS ';
+        const col5Header = historyHeaderMap[5] || 'Escallated to ';
+        const col6Header = historyHeaderMap[6] || 'Remarks';
 
-        // Step 1: Append to History Worksheet
+        // Format records as objects matching exact Row 2 headers
+        const recordObjects = validRows.map(row => {
+          const obj = {};
+          obj[col1Header] = row[0] || '';
+          obj[col2Header] = row[1] || '';
+          obj[col3Header] = row[2] || '';
+          obj[col4Header] = row[3] || '';
+          obj[col5Header] = row[4] || '';
+          obj[col6Header] = row[5] || '';
+          return obj;
+        });
+
+        // Step 2: Append to History Worksheet
         logTransfer(`💾 [${username.trim()}]: Appending ${recordObjects.length} rows to History Worksheet [${username.trim()}]...`);
         try {
           await window.zohoClient.appendWorksheetRecords(historySheetId, username, recordObjects, 2);

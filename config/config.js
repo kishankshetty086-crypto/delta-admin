@@ -24,8 +24,8 @@ window.DEFAULT_CONFIG = {
       "Krathika"
     ],
     "autoNotifyOnStatusChange": false,
-    "autoCliqBroadcast": true,
-    "cliqMonitoredOnly": true
+    "autoCliqBroadcast": false,
+    "cliqMonitoredOnly": false
   },
   "frontline": {
     "dailySheetId": "byske536c712d67f249cc9ac3d87a84bb71d9",

@@ -24,7 +24,7 @@
       "Krathika"
     ],
     "autoNotifyOnStatusChange": false,
-    "autoCliqBroadcast": flase,
+    "autoCliqBroadcast": false,
     "cliqMonitoredOnly": false
   },
   "frontline": {

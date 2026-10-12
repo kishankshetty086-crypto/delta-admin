@@ -93,7 +93,7 @@
     ]
   },
   "cliq": {
-    "webhookUrl": "https://cliq.zoho.in/api/v2/bots/documentnoren/message?zapikey=1001.4059baf778ec51922b5c3c9e90a19125.944278896f1767476f2395461a479dea",
+    "webhookUrl": "https://cliq.zoho.in/api/v2/channelsbyname/teambadelta/message?zapikey=1001.f605760f0768f5092f6745b5c4ee1250.a8626ac1822d6e00e56b57300015abcc",
     "botName": "Team Admin Monitor Bot"
   }
 }

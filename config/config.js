@@ -14,7 +14,7 @@ window.DEFAULT_CONFIG = {
   },
   "availability": {
     "apiUrl": "https://madhava.kambala.co.in/deltabaavailability/api/availability/",
-    "defaultIntervalSec": 300,
+    "defaultIntervalSec": 3600,
     "monitoredUsers": [
       "Sakil Raj",
       "Karthik",

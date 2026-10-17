@@ -1,0 +1,20 @@
+# ============================================================================
+# DELTA ADMIN - AUTO CRON SCHEDULE FILE (crons/schedule.txt)
+# ============================================================================
+# HOW TO USE (ZERO CODE CHANGES NEEDED):
+# 1. Drop any .bat, .awk, .cmd, or .ps1 script into the "crons/" folder.
+# 2. Add a line below with:   script_name = schedule_time
+#    (Any new script dropped in "crons/" is also auto-detected automatically!)
+#
+# SUPPORTED SCHEDULE FORMATS:
+#   • Daily Fixed Time(s) :  my_script.bat = 09:30, 14:00, 18:30
+#                            morning_job.awk = 10:15 AM
+#   • Recurring Interval  :  health_check.bat = every 15m   (or 30s, 5m, 2h)
+#   • Standard 5-Part Cron:  report.awk = */30 * * * *
+#   • With Arguments/Input:  parse.awk data.csv = 11:00
+#   • Manual Only         :  manual_script.bat = manual     (or leave blank)
+#   • Auto-Cliq Broadcast :  Add [cliq] at the end of the line to send output to Cliq
+# ============================================================================
+
+sample_check.bat = every 1m
+sample_report.awk = 09:30, 18:00

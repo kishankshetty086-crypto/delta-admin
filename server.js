@@ -171,6 +171,664 @@ if (pollerState.isRunning) {
   setTimeout(() => runBackendPollCycle('initial_boot'), 3000);
 }
 
+// ==========================================
+// 24/7 AUTO-DISCOVERY CRONS & SCRIPT ENGINE (.bat / .awk / .ps1 / .sh)
+// ==========================================
+const os = require('os');
+const CRONS_DIR = path.join(BASE_DIR, 'crons');
+const SCHEDULE_FILE = path.join(CRONS_DIR, 'schedule.txt');
+const RUN_HISTORY_LOG = path.join(CRONS_DIR, 'run_history.log');
+const RUN_HISTORY_JSON = path.join(CRONS_DIR, 'run_history.json');
+// Rebuild-Safe Vault outside the repo folder so git pull / rebuilds NEVER wipe user scripts or schedules
+const REBUILD_VAULT_DIR = path.join(os.homedir(), '.delta-admin-crons-backup');
+const ALLOWED_SCRIPT_EXTS = new Set(['.bat', '.awk', '.cmd', '.ps1', '.sh']);
+
+if (!fs.existsSync(CRONS_DIR)) {
+  fs.mkdirSync(CRONS_DIR, { recursive: true });
+}
+if (!fs.existsSync(REBUILD_VAULT_DIR)) {
+  try { fs.mkdirSync(REBUILD_VAULT_DIR, { recursive: true }); } catch (e) {}
+}
+
+// Restore any scripts/schedules from the external Rebuild-Safe Vault if missing after a build/re-clone
+function restoreFromRebuildSafeVault() {
+  try {
+    if (!fs.existsSync(REBUILD_VAULT_DIR)) return;
+    const vaultEntries = fs.readdirSync(REBUILD_VAULT_DIR, { withFileTypes: true });
+    for (const entry of vaultEntries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      const srcPath = path.join(REBUILD_VAULT_DIR, entry.name);
+      const destPath = path.join(CRONS_DIR, entry.name);
+      if (ALLOWED_SCRIPT_EXTS.has(ext) && !fs.existsSync(destPath)) {
+        fs.copyFileSync(srcPath, destPath);
+      } else if ((entry.name === 'run_history.log' || entry.name === 'run_history.json') && !fs.existsSync(destPath)) {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+    // Merge vault schedule.txt entries into local schedule.txt so custom schedules survive rebuilds
+    const vaultSchedPath = path.join(REBUILD_VAULT_DIR, 'schedule.txt');
+    if (fs.existsSync(vaultSchedPath)) {
+      if (!fs.existsSync(SCHEDULE_FILE)) {
+        fs.copyFileSync(vaultSchedPath, SCHEDULE_FILE);
+      } else {
+        const localText = fs.readFileSync(SCHEDULE_FILE, 'utf8');
+        const vaultText = fs.readFileSync(vaultSchedPath, 'utf8');
+        const localMap = new Map();
+        localText.split(/\r?\n/).forEach(l => {
+          const t = l.trim();
+          if (!t || t.startsWith('#') || t.startsWith('//')) return;
+          const name = t.split(/[\s=|]+/)[0].toLowerCase();
+          if (name) localMap.set(name, t);
+        });
+        let linesToAppend = '';
+        vaultText.split(/\r?\n/).forEach(l => {
+          const t = l.trim();
+          if (!t || t.startsWith('#') || t.startsWith('//')) return;
+          const name = t.split(/[\s=|]+/)[0].toLowerCase();
+          if (name && !localMap.has(name)) {
+            linesToAppend += `\n${t}`;
+          }
+        });
+        if (linesToAppend) {
+          fs.appendFileSync(SCHEDULE_FILE, linesToAppend + '\n', 'utf8');
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Vault restore check note:", e.message);
+  }
+}
+
+// Mirror current crons/ scripts & schedule.txt to the external Rebuild-Safe Vault
+function mirrorToRebuildSafeVault() {
+  try {
+    if (!fs.existsSync(REBUILD_VAULT_DIR)) fs.mkdirSync(REBUILD_VAULT_DIR, { recursive: true });
+    if (fs.existsSync(SCHEDULE_FILE)) {
+      fs.copyFileSync(SCHEDULE_FILE, path.join(REBUILD_VAULT_DIR, 'schedule.txt'));
+    }
+    if (fs.existsSync(RUN_HISTORY_LOG)) {
+      fs.copyFileSync(RUN_HISTORY_LOG, path.join(REBUILD_VAULT_DIR, 'run_history.log'));
+    }
+    if (fs.existsSync(RUN_HISTORY_JSON)) {
+      fs.copyFileSync(RUN_HISTORY_JSON, path.join(REBUILD_VAULT_DIR, 'run_history.json'));
+    }
+    for (const scriptObj of Object.values(cronEngineState.scripts)) {
+      if (scriptObj.fullPath && fs.existsSync(scriptObj.fullPath)) {
+        fs.copyFileSync(scriptObj.fullPath, path.join(REBUILD_VAULT_DIR, scriptObj.name));
+      }
+    }
+  } catch (e) {}
+}
+
+let cronEngineState = {
+  isRunning: currentConfig.crons?.engineActive ?? true,
+  scripts: {}, // keyed by script filename
+  history: [],
+  lastScanTime: null
+};
+
+// Load persisted run history if available
+function loadCronHistory() {
+  try {
+    if (fs.existsSync(RUN_HISTORY_JSON)) {
+      const parsed = JSON.parse(fs.readFileSync(RUN_HISTORY_JSON, 'utf8'));
+      if (Array.isArray(parsed.history)) {
+        cronEngineState.history = parsed.history;
+      }
+      if (parsed.scriptStats && typeof parsed.scriptStats === 'object') {
+        for (const [name, stats] of Object.entries(parsed.scriptStats)) {
+          cronEngineState.scripts[name] = {
+            ...(cronEngineState.scripts[name] || {}),
+            ...stats,
+            isExecuting: false
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load cron history JSON:", e.message);
+  }
+}
+
+function saveCronHistory() {
+  try {
+    const scriptStats = {};
+    for (const [name, s] of Object.entries(cronEngineState.scripts)) {
+      scriptStats[name] = {
+        lastRunTime: s.lastRunTime || null,
+        lastDurationMs: s.lastDurationMs ?? null,
+        lastStatus: s.lastStatus || 'idle',
+        lastExitCode: s.lastExitCode ?? null,
+        lastOutput: s.lastOutput || '',
+        lastTrigger: s.lastTrigger || null,
+        runCount: s.runCount || 0,
+        lastFiredMinuteKey: s.lastFiredMinuteKey || null
+      };
+    }
+    fs.writeFileSync(RUN_HISTORY_JSON, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      scriptStats,
+      history: cronEngineState.history.slice(0, 100)
+    }, null, 2), 'utf8');
+  } catch (e) {
+    console.warn("Could not save cron history JSON:", e.message);
+  }
+}
+
+function resolveAwkExecutable() {
+  const candidates = [
+    'C:\\Program Files\\Git\\usr\\bin\\awk.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\gawk.exe',
+    'C:\\Program Files (x86)\\Git\\usr\\bin\\awk.exe',
+    'C:\\msys64\\usr\\bin\\awk.exe'
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return `"${c}"`;
+  }
+  return 'awk';
+}
+
+// Parse flexible human schedule string from schedule.txt
+function parseCronScheduleRule(rawRule) {
+  let rule = (rawRule || '').trim();
+  let autoCliq = false;
+  if (/\[cliq\]/i.test(rule)) {
+    autoCliq = true;
+    rule = rule.replace(/\[cliq\]/gi, '').trim();
+  }
+
+  if (!rule || /^(manual|off|none|disabled|pause|paused|-)$/i.test(rule)) {
+    return { type: 'manual', raw: rawRule || 'manual', autoCliq, label: 'Manual Only' };
+  }
+
+  // 1. Check interval format: "every 5m", "every 30s", "every 2h", "15m", "300s", "10 mins"
+  const intervalMatch = rule.match(/^(?:every\s+)?(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/i);
+  if (intervalMatch) {
+    const val = parseInt(intervalMatch[1], 10);
+    const unit = intervalMatch[2].toLowerCase();
+    let intervalSec = val;
+    if (unit.startsWith('m')) intervalSec = val * 60;
+    else if (unit.startsWith('h')) intervalSec = val * 3600;
+    intervalSec = Math.max(5, intervalSec);
+    return {
+      type: 'interval',
+      intervalSec,
+      raw: rawRule,
+      autoCliq,
+      label: `Every ${val}${unit[0]}`
+    };
+  }
+
+  // 2. Check daily time(s) format: "09:30", "09:30, 14:00, 18:30", "9:30 AM", "06:15 PM"
+  const timeParts = rule.split(',').map(p => p.trim()).filter(Boolean);
+  const parsedTimes = [];
+  let allValidTimes = timeParts.length > 0;
+
+  for (const part of timeParts) {
+    const tm = part.match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+    if (!tm) {
+      allValidTimes = false;
+      break;
+    }
+    let hh = parseInt(tm[1], 10);
+    const mm = parseInt(tm[2], 10);
+    const ampm = tm[3] ? tm[3].toUpperCase() : null;
+    if (ampm === 'PM' && hh < 12) hh += 12;
+    if (ampm === 'AM' && hh === 12) hh = 0;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+      allValidTimes = false;
+      break;
+    }
+    parsedTimes.push({ hh, mm, formatted: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` });
+  }
+
+  if (allValidTimes) {
+    parsedTimes.sort((a, b) => (a.hh * 60 + a.mm) - (b.hh * 60 + b.mm));
+    return {
+      type: 'daily_times',
+      times: parsedTimes,
+      raw: rawRule,
+      autoCliq,
+      label: `Daily at ${parsedTimes.map(t => t.formatted).join(', ')}`
+    };
+  }
+
+  // 3. Check standard 5-field cron expression: "* * * * *" (min hour dom month dow)
+  const cronTokens = rule.split(/\s+/);
+  if (cronTokens.length === 5) {
+    return {
+      type: 'cron_expr',
+      expr: rule,
+      fields: cronTokens,
+      raw: rawRule,
+      autoCliq,
+      label: `Cron (${rule})`
+    };
+  }
+
+  return { type: 'invalid', raw: rawRule, autoCliq, label: `Invalid (${rule})` };
+}
+
+function matchCronField(fieldStr, value) {
+  if (fieldStr === '*') return true;
+  const parts = fieldStr.split(',');
+  for (const part of parts) {
+    if (part.includes('/')) {
+      const [base, stepStr] = part.split('/');
+      const step = parseInt(stepStr, 10);
+      if (!step || step <= 0) continue;
+      if (base === '*') {
+        if (value % step === 0) return true;
+      } else if (base.includes('-')) {
+        const [min, max] = base.split('-').map(Number);
+        if (value >= min && value <= max && (value - min) % step === 0) return true;
+      }
+    } else if (part.includes('-')) {
+      const [min, max] = part.split('-').map(Number);
+      if (value >= min && value <= max) return true;
+    } else {
+      if (parseInt(part, 10) === value) return true;
+    }
+  }
+  return false;
+}
+
+function doesCronExprMatchDate(fields, dateObj) {
+  const [minF, hourF, domF, monF, dowF] = fields;
+  return (
+    matchCronField(minF, dateObj.getMinutes()) &&
+    matchCronField(hourF, dateObj.getHours()) &&
+    matchCronField(domF, dateObj.getDate()) &&
+    matchCronField(monF, dateObj.getMonth() + 1) &&
+    matchCronField(dowF, dateObj.getDay())
+  );
+}
+
+function computeNextRunTime(scriptObj, nowMs = Date.now()) {
+  if (!cronEngineState.isRunning) return null;
+  const parsed = scriptObj.parsedSchedule;
+  if (!parsed || parsed.type === 'manual' || parsed.type === 'invalid') return null;
+
+  if (parsed.type === 'interval') {
+    const baseMs = scriptObj.lastRunTime ? new Date(scriptObj.lastRunTime).getTime() : scriptObj.discoveredAtMs || nowMs;
+    const nextMs = baseMs + parsed.intervalSec * 1000;
+    return new Date(Math.max(nowMs + 1000, nextMs)).toISOString();
+  }
+
+  if (parsed.type === 'daily_times') {
+    const now = new Date(nowMs);
+    for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
+      for (const t of parsed.times) {
+        const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, t.hh, t.mm, 0, 0);
+        const candMinuteKey = `${candidate.getFullYear()}-${candidate.getMonth()}-${candidate.getDate()}-${t.hh}:${t.mm}`;
+        if (candidate.getTime() > nowMs || (candidate.getTime() + 59000 > nowMs && scriptObj.lastFiredMinuteKey !== candMinuteKey)) {
+          if (candidate.getTime() <= nowMs && scriptObj.lastFiredMinuteKey !== candMinuteKey) {
+            return new Date(nowMs).toISOString();
+          }
+          if (candidate.getTime() > nowMs) {
+            return candidate.toISOString();
+          }
+        }
+      }
+    }
+  }
+
+  if (parsed.type === 'cron_expr') {
+    const base = new Date(nowMs);
+    base.setSeconds(0, 0);
+    for (let i = 0; i < 1440 * 7; i++) {
+      const cand = new Date(base.getTime() + i * 60000);
+      const candKey = `${cand.getFullYear()}-${cand.getMonth()}-${cand.getDate()}-${cand.getHours()}:${cand.getMinutes()}`;
+      if (doesCronExprMatchDate(parsed.fields, cand)) {
+        if (i === 0 && scriptObj.lastFiredMinuteKey !== candKey) {
+          return new Date(nowMs).toISOString();
+        } else if (i > 0) {
+          return cand.toISOString();
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+// Scan crons/ folder and sync with crons/schedule.txt
+function syncCronsFolderAndSchedule() {
+  try {
+    if (!fs.existsSync(CRONS_DIR)) fs.mkdirSync(CRONS_DIR, { recursive: true });
+    if (!fs.existsSync(SCHEDULE_FILE)) {
+      fs.writeFileSync(SCHEDULE_FILE, `# DELTA ADMIN - AUTO CRON SCHEDULE FILE (crons/schedule.txt)\n# Format: script_name = HH:MM  OR  every 15m  OR  */30 * * * *\n\n`, 'utf8');
+    }
+
+    // 1. Read schedule.txt lines
+    const rawScheduleText = fs.readFileSync(SCHEDULE_FILE, 'utf8');
+    const scheduleMap = new Map(); // filename -> { args, ruleStr }
+
+    rawScheduleText.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return;
+
+      // Support "script.bat [args] = schedule" or "script.bat | schedule"
+      let left = '';
+      let right = '';
+      if (trimmed.includes('=')) {
+        const idx = trimmed.indexOf('=');
+        left = trimmed.slice(0, idx).trim();
+        right = trimmed.slice(idx + 1).trim();
+      } else if (trimmed.includes('|')) {
+        const idx = trimmed.indexOf('|');
+        left = trimmed.slice(0, idx).trim();
+        right = trimmed.slice(idx + 1).trim();
+      } else {
+        const tokens = trimmed.split(/\s+/);
+        left = tokens[0];
+        right = tokens.slice(1).join(' ');
+      }
+
+      if (left) {
+        const parts = left.split(/\s+/);
+        const scriptName = parts[0].trim();
+        const scriptArgs = parts.slice(1).join(' ').trim();
+        scheduleMap.set(scriptName.toLowerCase(), {
+          exactName: scriptName,
+          args: scriptArgs,
+          ruleStr: right || 'manual'
+        });
+      }
+    });
+
+    // 2. Discover all script files in crons/ (and crons/scripts/ if present)
+    const discoveredFiles = new Map(); // lowerName -> { name, relPath, fullPath, ext, size, mtime }
+    const scanDirs = [CRONS_DIR, path.join(CRONS_DIR, 'scripts')];
+
+    for (const dir of scanDirs) {
+      if (!fs.existsSync(dir)) continue;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!ALLOWED_SCRIPT_EXTS.has(ext)) continue;
+        const fullPath = path.join(dir, entry.name);
+        const st = fs.statSync(fullPath);
+        discoveredFiles.set(entry.name.toLowerCase(), {
+          name: entry.name,
+          fullPath,
+          ext,
+          size: st.size,
+          mtime: st.mtime.toISOString()
+        });
+      }
+    }
+
+    // 3. Auto-append newly dropped files to schedule.txt so user sees them immediately
+    let appendedNewToSchedule = false;
+    let newLinesToAppend = '';
+    for (const [lowerName, fileInfo] of discoveredFiles.entries()) {
+      if (!scheduleMap.has(lowerName)) {
+        scheduleMap.set(lowerName, {
+          exactName: fileInfo.name,
+          args: '',
+          ruleStr: 'manual'
+        });
+        newLinesToAppend += `\n${fileInfo.name} = manual`;
+        appendedNewToSchedule = true;
+      }
+    }
+
+    if (appendedNewToSchedule) {
+      try {
+        fs.appendFileSync(SCHEDULE_FILE, newLinesToAppend + '\n', 'utf8');
+      } catch (e) {
+        console.warn("Could not auto-append to schedule.txt:", e.message);
+      }
+    }
+
+    // 4. Update cronEngineState.scripts
+    const nowMs = Date.now();
+    const activeNames = new Set();
+
+    for (const [lowerName, fileInfo] of discoveredFiles.entries()) {
+      activeNames.add(fileInfo.name);
+      const schedEntry = scheduleMap.get(lowerName) || { args: '', ruleStr: 'manual' };
+      const existing = cronEngineState.scripts[fileInfo.name] || {};
+      const parsedSchedule = parseCronScheduleRule(schedEntry.ruleStr);
+
+      const updatedScript = {
+        name: fileInfo.name,
+        ext: fileInfo.ext,
+        fullPath: fileInfo.fullPath,
+        size: fileInfo.size,
+        mtime: fileInfo.mtime,
+        args: schedEntry.args || '',
+        scheduleRaw: schedEntry.ruleStr,
+        parsedSchedule,
+        discoveredAtMs: existing.discoveredAtMs || nowMs,
+        isExecuting: existing.isExecuting || false,
+        lastRunTime: existing.lastRunTime || null,
+        lastDurationMs: existing.lastDurationMs ?? null,
+        lastStatus: existing.lastStatus || 'idle',
+        lastExitCode: existing.lastExitCode ?? null,
+        lastOutput: existing.lastOutput || '',
+        lastTrigger: existing.lastTrigger || null,
+        runCount: existing.runCount || 0,
+        lastFiredMinuteKey: existing.lastFiredMinuteKey || null
+      };
+      updatedScript.nextRunTime = computeNextRunTime(updatedScript, nowMs);
+      cronEngineState.scripts[fileInfo.name] = updatedScript;
+    }
+
+    // Remove deleted scripts from active map
+    for (const existingName of Object.keys(cronEngineState.scripts)) {
+      if (!activeNames.has(existingName)) {
+        delete cronEngineState.scripts[existingName];
+      }
+    }
+
+    cronEngineState.lastScanTime = new Date().toISOString();
+    mirrorToRebuildSafeVault();
+  } catch (err) {
+    console.warn("Error scanning crons folder:", err.message);
+  }
+}
+
+// Update a single script's schedule line inside crons/schedule.txt
+function updateScheduleFileForScript(scriptName, newScheduleRaw, scriptArgs = '') {
+  let content = '';
+  if (fs.existsSync(SCHEDULE_FILE)) {
+    content = fs.readFileSync(SCHEDULE_FILE, 'utf8');
+  }
+  const lines = content.split(/\r?\n/);
+  const targetLower = scriptName.toLowerCase();
+  let found = false;
+  const formattedLeft = scriptArgs ? `${scriptName} ${scriptArgs}` : scriptName;
+
+  const updatedLines = lines.map(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return line;
+    const firstToken = trimmed.split(/[\s=|]+/)[0].toLowerCase();
+    if (firstToken === targetLower) {
+      found = true;
+      return `${formattedLeft} = ${newScheduleRaw}`;
+    }
+    return line;
+  });
+
+  if (!found) {
+    updatedLines.push(`${formattedLeft} = ${newScheduleRaw}`);
+  }
+
+  fs.writeFileSync(SCHEDULE_FILE, updatedLines.join('\n'), 'utf8');
+  syncCronsFolderAndSchedule();
+}
+
+// Execute a .bat / .awk / .ps1 / .sh script and record runtime to crons/run_history.log & .json
+async function executeCronScript(scriptName, triggerSource = 'scheduled') {
+  syncCronsFolderAndSchedule();
+  const scriptObj = cronEngineState.scripts[scriptName];
+  if (!scriptObj) {
+    throw new Error(`Script "${scriptName}" not found in crons/ directory.`);
+  }
+  if (scriptObj.isExecuting) {
+    return { status: 'busy', message: `Script "${scriptName}" is already running.` };
+  }
+
+  scriptObj.isExecuting = true;
+  const startMs = Date.now();
+  const startIso = new Date(startMs).toISOString();
+  scriptObj.lastRunTime = startIso;
+  scriptObj.lastTrigger = triggerSource;
+  scriptObj.lastStatus = 'running';
+
+  // Build command line based on file extension
+  const fullPath = scriptObj.fullPath;
+  const args = scriptObj.args || '';
+  let cmd = '';
+
+  if (scriptObj.ext === '.awk') {
+    const awkBin = resolveAwkExecutable();
+    // Provide < NUL if no input file argument is passed so AWK scripts never hang waiting for stdin
+    const inputRedir = args ? '' : ' < NUL';
+    cmd = `${awkBin} -f "${fullPath}" ${args}${inputRedir}`;
+  } else if (scriptObj.ext === '.bat' || scriptObj.ext === '.cmd') {
+    cmd = `cmd.exe /c ""${fullPath}" ${args}"`;
+  } else if (scriptObj.ext === '.ps1') {
+    cmd = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${fullPath}" ${args}`;
+  } else if (scriptObj.ext === '.sh') {
+    cmd = `bash "${fullPath}" ${args}`;
+  } else {
+    cmd = `"${fullPath}" ${args}`;
+  }
+
+  // Ensure Git usr\bin is in PATH so .bat scripts calling awk/sed/grep work natively on Windows
+  const envPath = process.env.PATH || '';
+  const extraPaths = ['C:\\Program Files\\Git\\usr\\bin', 'C:\\Program Files\\Git\\bin'];
+  const augmentedPath = [...extraPaths, envPath].join(path.delimiter);
+
+  return new Promise((resolve) => {
+    exec(cmd, {
+      cwd: CRONS_DIR,
+      env: { ...process.env, PATH: augmentedPath },
+      timeout: 5 * 60 * 1000, // 5 minute safety timeout
+      maxBuffer: 1024 * 1024 * 2
+    }, async (error, stdout, stderr) => {
+      const endMs = Date.now();
+      const durationMs = endMs - startMs;
+      const exitCode = error ? (error.code ?? 1) : 0;
+      const status = error ? 'error' : 'success';
+      const combinedOutput = [stdout, stderr, error && !stderr ? error.message : '']
+        .map(s => (s || '').trim())
+        .filter(Boolean)
+        .join('\n') || '(No console output)';
+
+      scriptObj.isExecuting = false;
+      scriptObj.lastDurationMs = durationMs;
+      scriptObj.lastStatus = status;
+      scriptObj.lastExitCode = exitCode;
+      scriptObj.lastOutput = combinedOutput.slice(0, 4000);
+      scriptObj.runCount = (scriptObj.runCount || 0) + 1;
+      scriptObj.nextRunTime = computeNextRunTime(scriptObj, endMs);
+
+      const istTimeStr = new Date(startMs).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+
+      const historyEntry = {
+        id: `${startMs}-${scriptName}`,
+        timestamp: startIso,
+        istTime: istTimeStr,
+        scriptName,
+        ext: scriptObj.ext,
+        scheduleLabel: scriptObj.parsedSchedule?.label || scriptObj.scheduleRaw,
+        triggerSource,
+        status,
+        exitCode,
+        durationMs,
+        output: scriptObj.lastOutput
+      };
+
+      cronEngineState.history.unshift(historyEntry);
+      if (cronEngineState.history.length > 100) cronEngineState.history.pop();
+      saveCronHistory();
+
+      // Append to human-readable crons/run_history.log (1 unified file with run time of all recorded)
+      const singleLineOutput = combinedOutput.replace(/\r?\n/g, ' :: ').slice(0, 500);
+      const logLine = `[${istTimeStr}] | SCRIPT: ${scriptName.padEnd(22)} | SCHEDULE: ${(scriptObj.scheduleRaw || 'manual').padEnd(16)} | TRIGGER: ${triggerSource.padEnd(10)} | STATUS: ${status.toUpperCase()} (Code ${exitCode}) | RUN TIME: ${durationMs}ms | OUTPUT: ${singleLineOutput}\n`;
+      try {
+        fs.appendFileSync(RUN_HISTORY_LOG, logLine, 'utf8');
+      } catch (e) {
+        console.warn("Could not write to run_history.log:", e.message);
+      }
+      mirrorToRebuildSafeVault();
+
+      // Optional Auto-Cliq broadcast if [cliq] tag is in schedule.txt
+      if (scriptObj.parsedSchedule?.autoCliq && currentConfig.cliq?.webhookUrl) {
+        try {
+          const icon = status === 'success' ? '✅' : '❌';
+          const cliqMsg = `${icon} *Cron Script Executed: ${scriptName}*\n🕒 *Time:* ${istTimeStr}\n⏱️ *Run Duration:* ${durationMs}ms | *Trigger:* ${triggerSource}\n\`\`\`\n${combinedOutput.slice(0, 800)}\n\`\`\``;
+          await makePostRequest(currentConfig.cliq.webhookUrl, { 'Content-Type': 'application/json' }, JSON.stringify({ text: cliqMsg }));
+        } catch (e) {}
+      }
+
+      resolve(historyEntry);
+    });
+  });
+}
+
+// 24/7 Background Scheduler Loop (runs every 1 second independent of any browser tab)
+let lastFolderSyncMs = 0;
+setInterval(() => {
+  const nowMs = Date.now();
+  // Auto-rescan crons folder & schedule.txt every 3 seconds to pick up new files/edits automatically
+  if (nowMs - lastFolderSyncMs >= 3000) {
+    lastFolderSyncMs = nowMs;
+    syncCronsFolderAndSchedule();
+  }
+
+  if (!cronEngineState.isRunning) return;
+
+  const now = new Date(nowMs);
+  const currentMinuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}:${now.getMinutes()}`;
+
+  for (const scriptObj of Object.values(cronEngineState.scripts)) {
+    if (scriptObj.isExecuting) continue;
+    const parsed = scriptObj.parsedSchedule;
+    if (!parsed || parsed.type === 'manual' || parsed.type === 'invalid') continue;
+
+    if (parsed.type === 'interval') {
+      const nextMs = scriptObj.nextRunTime ? new Date(scriptObj.nextRunTime).getTime() : 0;
+      if (nextMs && nowMs >= nextMs) {
+        executeCronScript(scriptObj.name, 'scheduled');
+      }
+    } else if (parsed.type === 'daily_times') {
+      for (const t of parsed.times) {
+        if (now.getHours() === t.hh && now.getMinutes() === t.mm && scriptObj.lastFiredMinuteKey !== currentMinuteKey) {
+          scriptObj.lastFiredMinuteKey = currentMinuteKey;
+          executeCronScript(scriptObj.name, 'scheduled');
+          break;
+        }
+      }
+    } else if (parsed.type === 'cron_expr') {
+      if (doesCronExprMatchDate(parsed.fields, now) && scriptObj.lastFiredMinuteKey !== currentMinuteKey) {
+        scriptObj.lastFiredMinuteKey = currentMinuteKey;
+        executeCronScript(scriptObj.name, 'scheduled');
+      }
+    }
+  }
+}, 1000);
+
+// Initialize Cron History & Initial Scan on Server Boot (Auto-Restore from Vault if rebuilt)
+restoreFromRebuildSafeVault();
+loadCronHistory();
+syncCronsFolderAndSchedule();
+
 // Helper: HTTP/HTTPS POST
 function makePostRequest(targetUrl, headers, postData) {
   return new Promise((resolve, reject) => {
@@ -637,6 +1295,136 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(currentConfig));
       }
+      return;
+    }
+
+    // API: Crons Status & Auto-Discovery
+    if (pathname === '/api/crons/status') {
+      syncCronsFolderAndSchedule();
+      let rawScheduleText = '';
+      let rawLogText = '';
+      try {
+        if (fs.existsSync(SCHEDULE_FILE)) rawScheduleText = fs.readFileSync(SCHEDULE_FILE, 'utf8');
+        if (fs.existsSync(RUN_HISTORY_LOG)) {
+          const fullLog = fs.readFileSync(RUN_HISTORY_LOG, 'utf8');
+          const logLines = fullLog.trim().split(/\r?\n/).filter(Boolean);
+          rawLogText = logLines.slice(-100).reverse().join('\n');
+        }
+      } catch (e) {}
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        isRunning: cronEngineState.isRunning,
+        cronsDir: CRONS_DIR,
+        scheduleFile: SCHEDULE_FILE,
+        runHistoryLogFile: RUN_HISTORY_LOG,
+        lastScanTime: cronEngineState.lastScanTime,
+        scripts: Object.values(cronEngineState.scripts),
+        history: cronEngineState.history.slice(0, 60),
+        rawScheduleText,
+        rawLogText
+      }));
+      return;
+    }
+
+    // API: Crons Read Script Source Content
+    if (pathname === '/api/crons/script-content') {
+      const scriptName = path.basename(parsedUrl.searchParams.get('name') || '');
+      const scriptObj = cronEngineState.scripts[scriptName];
+      if (!scriptObj || !fs.existsSync(scriptObj.fullPath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'error', error: 'Script file not found' }));
+        return;
+      }
+      const code = fs.readFileSync(scriptObj.fullPath, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'success', name: scriptName, content: code }));
+      return;
+    }
+
+    // API: Crons Control (Run Now, Update Schedule, Save schedule.txt, Create/Edit Script, Toggle Engine, Clear Logs)
+    if (pathname === '/api/crons/control') {
+      const payload = JSON.parse(reqBody || '{}');
+      const action = payload.action;
+
+      if (action === 'toggle_engine') {
+        cronEngineState.isRunning = typeof payload.isRunning === 'boolean' ? payload.isRunning : !cronEngineState.isRunning;
+        if (!currentConfig.crons) currentConfig.crons = {};
+        currentConfig.crons.engineActive = cronEngineState.isRunning;
+        try {
+          fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
+        } catch (e) {}
+        syncCronsFolderAndSchedule();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', isRunning: cronEngineState.isRunning }));
+        return;
+      }
+
+      if (action === 'run_now') {
+        const scriptName = path.basename(payload.scriptName || '');
+        const runRes = await executeCronScript(scriptName, 'manual');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', result: runRes }));
+        return;
+      }
+
+      if (action === 'update_script_schedule') {
+        const scriptName = path.basename(payload.scriptName || '');
+        const scheduleRaw = (payload.scheduleRaw || 'manual').trim();
+        const scriptArgs = (payload.args || '').trim();
+        updateScheduleFileForScript(scriptName, scheduleRaw, scriptArgs);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'success',
+          message: `Updated schedule for ${scriptName} in crons/schedule.txt`,
+          script: cronEngineState.scripts[scriptName]
+        }));
+        return;
+      }
+
+      if (action === 'save_schedule_file') {
+        const content = typeof payload.content === 'string' ? payload.content : '';
+        fs.writeFileSync(SCHEDULE_FILE, content, 'utf8');
+        syncCronsFolderAndSchedule();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', message: 'crons/schedule.txt saved and auto-captured!' }));
+        return;
+      }
+
+      if (action === 'save_script_file') {
+        const rawName = path.basename((payload.scriptName || '').trim());
+        const ext = path.extname(rawName).toLowerCase();
+        if (!rawName || !ALLOWED_SCRIPT_EXTS.has(ext)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'error', error: 'Script filename must end with .bat, .awk, .cmd, .ps1, or .sh' }));
+          return;
+        }
+        const targetPath = path.join(CRONS_DIR, rawName);
+        fs.writeFileSync(targetPath, payload.content || '', 'utf8');
+        if (payload.scheduleRaw) {
+          updateScheduleFileForScript(rawName, payload.scheduleRaw.trim(), (payload.args || '').trim());
+        } else {
+          syncCronsFolderAndSchedule();
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', message: `Script ${rawName} saved in crons/ folder!` }));
+        return;
+      }
+
+      if (action === 'clear_history') {
+        cronEngineState.history = [];
+        try {
+          if (fs.existsSync(RUN_HISTORY_LOG)) fs.writeFileSync(RUN_HISTORY_LOG, '', 'utf8');
+          saveCronHistory();
+        } catch (e) {}
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', message: 'Run history cleared.' }));
+        return;
+      }
+
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'error', error: `Unknown action: ${action}` }));
       return;
     }
 

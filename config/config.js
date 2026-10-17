@@ -25,7 +25,8 @@ window.DEFAULT_CONFIG = {
     ],
     "autoNotifyOnStatusChange": false,
     "autoCliqBroadcast": false,
-    "cliqMonitoredOnly": false
+    "cliqMonitoredOnly": false,
+    "autoPollerActive": false
   },
   "frontline": {
     "dailySheetId": "byske536c712d67f249cc9ac3d87a84bb71d9",
@@ -95,5 +96,8 @@ window.DEFAULT_CONFIG = {
   "cliq": {
     "webhookUrl": "https://cliq.zoho.in/api/v2/channelsbyname/teambadelta/message?zapikey=1001.f605760f0768f5092f6745b5c4ee1250.a8626ac1822d6e00e56b57300015abcc",
     "botName": "Team Admin Monitor Bot"
+  },
+  "crons": {
+    "engineActive": false
   }
 };

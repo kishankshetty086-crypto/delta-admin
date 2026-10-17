@@ -1,0 +1,92 @@
+{
+  "updatedAt": "2026-10-17T18:40:34.242Z",
+  "scriptStats": {
+    "sample_check.bat": {
+      "lastRunTime": "2026-10-17T18:40:34.186Z",
+      "lastDurationMs": 56,
+      "lastStatus": "success",
+      "lastExitCode": 0,
+      "lastOutput": "[Delta Admin Cron] Running System and Network Health Check...\r\nExecution Time: 18-10-2026  0:10:34.23\r\nHostname: KSPL_DELL-44\r\nStatus: All local batch services operational.",
+      "lastTrigger": "scheduled",
+      "runCount": 5,
+      "lastFiredMinuteKey": null
+    },
+    "sample_report.awk": {
+      "lastRunTime": "2026-10-17T18:27:16.533Z",
+      "lastDurationMs": 41,
+      "lastStatus": "success",
+      "lastExitCode": 0,
+      "lastOutput": "[Delta Admin AWK Cron] Initializing AWK Report Processor...\nTeam Members Checked: 6 | Sample Metric Score: 100.0%\nAWK Script execution completed successfully.",
+      "lastTrigger": "manual",
+      "runCount": 1,
+      "lastFiredMinuteKey": null
+    }
+  },
+  "history": [
+    {
+      "id": "1792262434186-sample_check.bat",
+      "timestamp": "2026-10-17T18:40:34.186Z",
+      "istTime": "18/10/2026, 12:10:34 am",
+      "scriptName": "sample_check.bat",
+      "ext": ".bat",
+      "scheduleLabel": "Every 1m",
+      "triggerSource": "scheduled",
+      "status": "success",
+      "exitCode": 0,
+      "durationMs": 56,
+      "output": "[Delta Admin Cron] Running System and Network Health Check...\r\nExecution Time: 18-10-2026  0:10:34.23\r\nHostname: KSPL_DELL-44\r\nStatus: All local batch services operational."
+    },
+    {
+      "id": "1792262373748-sample_check.bat",
+      "timestamp": "2026-10-17T18:39:33.748Z",
+      "istTime": "18/10/2026, 12:09:33 am",
+      "scriptName": "sample_check.bat",
+      "ext": ".bat",
+      "scheduleLabel": "Every 1m",
+      "triggerSource": "scheduled",
+      "status": "success",
+      "exitCode": 0,
+      "durationMs": 52,
+      "output": "[Delta Admin Cron] Running System and Network Health Check...\r\nExecution Time: 18-10-2026  0:09:33.79\r\nHostname: KSPL_DELL-44\r\nStatus: All local batch services operational."
+    },
+    {
+      "id": "1792261879337-sample_check.bat",
+      "timestamp": "2026-10-17T18:31:19.337Z",
+      "istTime": "18/10/2026, 12:01:19 am",
+      "scriptName": "sample_check.bat",
+      "ext": ".bat",
+      "scheduleLabel": "Every 30m",
+      "triggerSource": "manual",
+      "status": "success",
+      "exitCode": 0,
+      "durationMs": 50,
+      "output": "[Delta Admin Cron] Running System and Network Health Check...\r\nExecution Time: 18-10-2026  0:01:19.36\r\nHostname: KSPL_DELL-44\r\nStatus: All local batch services operational."
+    },
+    {
+      "id": "1792261636533-sample_report.awk",
+      "timestamp": "2026-10-17T18:27:16.533Z",
+      "istTime": "17/10/2026, 11:57:16 pm",
+      "scriptName": "sample_report.awk",
+      "ext": ".awk",
+      "scheduleLabel": "Daily at 09:30, 18:00",
+      "triggerSource": "manual",
+      "status": "success",
+      "exitCode": 0,
+      "durationMs": 41,
+      "output": "[Delta Admin AWK Cron] Initializing AWK Report Processor...\nTeam Members Checked: 6 | Sample Metric Score: 100.0%\nAWK Script execution completed successfully."
+    },
+    {
+      "id": "1792261636466-sample_check.bat",
+      "timestamp": "2026-10-17T18:27:16.466Z",
+      "istTime": "17/10/2026, 11:57:16 pm",
+      "scriptName": "sample_check.bat",
+      "ext": ".bat",
+      "scheduleLabel": "Every 30m",
+      "triggerSource": "manual",
+      "status": "success",
+      "exitCode": 0,
+      "durationMs": 49,
+      "output": "[Delta Admin Cron] Running System and Network Health Check...\r\nExecution Time: 17-10-2026 23:57:16.50\r\nHostname: KSPL_DELL-44\r\nStatus: All local batch services operational."
+    }
+  ]
+}

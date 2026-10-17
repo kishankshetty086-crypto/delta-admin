@@ -164,6 +164,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       renderTasksToday();
     } else if (tabId === "tasks-pending") {
       renderTasksPending();
+    } else if (tabId === "crons") {
+      fetchCronsStatus();
     }
   }
 
@@ -1856,10 +1858,576 @@ document.addEventListener("DOMContentLoaded", async () => {
     reader.readAsText(file);
   });
 
+  // ==========================================
+  // TAB 5: CRONS & AUTO-DISCOVERED SCRIPTS (.BAT / .AWK)
+  // ==========================================
+  const cronsTableBody = document.getElementById("crons-scripts-table-body");
+  const cronsSearchInput = document.getElementById("crons-search-input");
+  const cronsScheduleTextarea = document.getElementById("crons-schedule-file-textarea");
+  const cronsHistoryList = document.getElementById("crons-history-list");
+  const cronsToggleEngineBtn = document.getElementById("crons-toggle-engine-btn");
+  const cronsRescanBtn = document.getElementById("crons-rescan-btn");
+  const cronsNewScriptBtn = document.getElementById("crons-new-script-btn");
+  const cronsSaveScheduleFileBtn = document.getElementById("crons-save-schedule-file-btn");
+  const cronsClearHistoryBtn = document.getElementById("crons-clear-history-btn");
+  const cronEngineBadge = document.getElementById("cron-engine-badge");
+  const cronsFolderPathEl = document.getElementById("crons-folder-path");
+
+  const cronScriptModal = document.getElementById("cron-script-modal");
+  const cronModalTitle = document.getElementById("cron-script-modal-title");
+  const cronModalFilename = document.getElementById("cron-modal-filename");
+  const cronModalSchedule = document.getElementById("cron-modal-schedule");
+  const cronModalCode = document.getElementById("cron-modal-code");
+  const cronModalOutput = document.getElementById("cron-modal-output");
+  const cronModalSaveBtn = document.getElementById("cron-modal-save-btn");
+  const cronModalRunBtn = document.getElementById("cron-modal-run-btn");
+
+  let cronsState = {
+    isRunning: true,
+    scripts: [],
+    history: [],
+    rawScheduleText: "",
+    rawLogText: "",
+    cronsDir: "crons/"
+  };
+
+  function escapeHtml(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function formatRelativeCountdown(isoStr) {
+    if (!isoStr) return "—";
+    const targetMs = new Date(isoStr).getTime();
+    const diffSec = Math.round((targetMs - Date.now()) / 1000);
+    const timeFormatted = new Date(targetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (diffSec <= 0) return `Due now (${timeFormatted})`;
+    if (diffSec < 60) return `in ${diffSec}s (${timeFormatted})`;
+    if (diffSec < 3600) {
+      const m = Math.floor(diffSec / 60);
+      const s = diffSec % 60;
+      return `in ${m}m ${s}s (${timeFormatted})`;
+    }
+    const h = Math.floor(diffSec / 3600);
+    const m = Math.floor((diffSec % 3600) / 60);
+    return `in ${h}h ${m}m (${timeFormatted})`;
+  }
+
+  function saveLocalCronBackup(scriptName, scheduleRaw, content) {
+    try {
+      const existing = JSON.parse(localStorage.getItem("delta_admin_crons_backup") || "{}");
+      existing[scriptName] = {
+        scriptName,
+        scheduleRaw,
+        content: content !== undefined ? content : (existing[scriptName]?.content || ""),
+        updatedAt: new Date().toISOString()
+      };
+      localStorage.setItem("delta_admin_crons_backup", JSON.stringify(existing));
+    } catch (e) {}
+  }
+
+  let isAutoRestoringCrons = false;
+  async function autoRestoreMissingLocalScripts(serverScripts) {
+    if (isAutoRestoringCrons) return false;
+    try {
+      const backup = JSON.parse(localStorage.getItem("delta_admin_crons_backup") || "{}");
+      const serverNames = new Set((serverScripts || []).map(s => s.name.toLowerCase()));
+      let restoredAny = false;
+      isAutoRestoringCrons = true;
+      for (const item of Object.values(backup)) {
+        if (item.scriptName && item.content && !serverNames.has(item.scriptName.toLowerCase())) {
+          await fetch("/api/crons/control", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "save_script_file",
+              scriptName: item.scriptName,
+              scheduleRaw: item.scheduleRaw || "manual",
+              content: item.content
+            })
+          });
+          restoredAny = true;
+        }
+      }
+      isAutoRestoringCrons = false;
+      return restoredAny;
+    } catch (e) {
+      isAutoRestoringCrons = false;
+      return false;
+    }
+  }
+
+  async function fetchCronsStatus(silent = true) {
+    if (!window.location.protocol.startsWith("http")) return;
+    try {
+      const res = await fetch("/api/crons/status");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === "success") {
+        // If any script created in the frontend is missing after a fresh build/re-clone, auto-restore it!
+        const restored = await autoRestoreMissingLocalScripts(data.scripts);
+        if (restored) {
+          const res2 = await fetch("/api/crons/status");
+          if (res2.ok) {
+            const data2 = await res2.json();
+            if (data2.status === "success") {
+              Object.assign(data, data2);
+            }
+          }
+        }
+
+        cronsState.isRunning = data.isRunning;
+        cronsState.scripts = data.scripts || [];
+        cronsState.history = data.history || [];
+        cronsState.rawScheduleText = data.rawScheduleText || "";
+        cronsState.rawLogText = data.rawLogText || "";
+        cronsState.cronsDir = data.cronsDir || "crons/";
+
+        renderCronsTab();
+        if (!silent) showToast(`Synced ${cronsState.scripts.length} scripts from crons/ folder.`, "success");
+      }
+    } catch (e) {
+      if (!silent) showToast(`Could not reach backend cron engine: ${e.message}`, "error");
+    }
+  }
+
+  function renderCronsTab() {
+    const totalScripts = cronsState.scripts.length;
+    const scheduledScripts = cronsState.scripts.filter(s => s.parsedSchedule && s.parsedSchedule.type !== "manual" && s.parsedSchedule.type !== "invalid").length;
+    const totalRuns = cronsState.history.length;
+
+    const elTotal = document.getElementById("stat-crons-total");
+    const elSched = document.getElementById("stat-crons-scheduled");
+    const elRuns = document.getElementById("stat-crons-runs");
+    const elEngine = document.getElementById("stat-crons-engine");
+    const elTabBadge = document.getElementById("tab-crons-badge");
+
+    if (elTotal) elTotal.textContent = totalScripts;
+    if (elSched) elSched.textContent = scheduledScripts;
+    if (elRuns) elRuns.textContent = totalRuns;
+    if (elTabBadge) elTabBadge.textContent = `${scheduledScripts}/${totalScripts} Active`;
+    if (cronsFolderPathEl) cronsFolderPathEl.textContent = cronsState.cronsDir;
+
+    if (cronsState.isRunning) {
+      if (elEngine) {
+        elEngine.textContent = "24/7 Active";
+        elEngine.style.color = "var(--accent-emerald)";
+      }
+      if (cronEngineBadge) {
+        cronEngineBadge.className = "badge badge-success";
+        cronEngineBadge.innerHTML = "🟢 24/7 Background Cron Engine: Running (Works Even With Browser Closed)";
+      }
+      if (cronsToggleEngineBtn) {
+        cronsToggleEngineBtn.className = "btn btn-warning btn-sm";
+        cronsToggleEngineBtn.innerHTML = "⏸️ Pause Engine";
+      }
+    } else {
+      if (elEngine) {
+        elEngine.textContent = "Paused";
+        elEngine.style.color = "var(--accent-amber)";
+      }
+      if (cronEngineBadge) {
+        cronEngineBadge.className = "badge badge-warning";
+        cronEngineBadge.innerHTML = "⏸️ 24/7 Background Cron Engine: Paused";
+      }
+      if (cronsToggleEngineBtn) {
+        cronsToggleEngineBtn.className = "btn btn-success btn-sm";
+        cronsToggleEngineBtn.innerHTML = "▶️ Resume Engine";
+      }
+    }
+
+    // Update schedule.txt textarea only if user is not currently typing in it
+    if (cronsScheduleTextarea && document.activeElement !== cronsScheduleTextarea) {
+      cronsScheduleTextarea.value = cronsState.rawScheduleText;
+    }
+
+    // Do not re-render table if user is actively editing an inline schedule input
+    if (document.activeElement && document.activeElement.classList.contains("cron-inline-schedule-input")) {
+      // Only update countdown texts
+      document.querySelectorAll("[data-cron-next-for]").forEach(el => {
+        const sName = el.getAttribute("data-cron-next-for");
+        const found = cronsState.scripts.find(x => x.name === sName);
+        if (found) {
+          el.textContent = found.nextRunTime ? formatRelativeCountdown(found.nextRunTime) : "Manual Only";
+        }
+      });
+    } else {
+      renderCronsScriptsTable();
+    }
+
+    renderCronsHistory();
+  }
+
+  function renderCronsScriptsTable() {
+    if (!cronsTableBody) return;
+    const filter = (cronsSearchInput?.value || "").toLowerCase();
+    const list = cronsState.scripts.filter(s =>
+      s.name.toLowerCase().includes(filter) ||
+      (s.scheduleRaw || "").toLowerCase().includes(filter) ||
+      (s.lastOutput || "").toLowerCase().includes(filter)
+    );
+
+    if (list.length === 0) {
+      cronsTableBody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; padding: 28px; color: var(--text-muted);">
+            No matching scripts found in <code>crons/</code> folder. Drop a <code>.bat</code> or <code>.awk</code> file into <code>crons/</code> or click "➕ Create Script".
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    cronsTableBody.innerHTML = list.map(s => {
+      const extUpper = (s.ext || "").replace(".", "").toUpperCase();
+      let extBadgeClass = "badge-escalation";
+      if (s.ext === ".awk") extBadgeClass = "badge-warning";
+      else if (s.ext === ".bat" || s.ext === ".cmd") extBadgeClass = "badge-success";
+
+      const pType = s.parsedSchedule?.type || "manual";
+      let schedBadge = `<span class="badge badge-muted">Manual</span>`;
+      if (pType === "interval" || pType === "daily_times" || pType === "cron_expr") {
+        schedBadge = `<span class="badge badge-success">${escapeHtml(s.parsedSchedule.label)}</span>`;
+      } else if (pType === "invalid") {
+        schedBadge = `<span class="badge badge-danger">${escapeHtml(s.parsedSchedule.label)}</span>`;
+      }
+
+      const nextRunDisplay = s.nextRunTime
+        ? `<strong data-cron-next-for="${escapeHtml(s.name)}" style="color: var(--accent-blue); font-size: 0.82rem;">${formatRelativeCountdown(s.nextRunTime)}</strong>`
+        : `<span data-cron-next-for="${escapeHtml(s.name)}" style="color: var(--text-muted); font-size: 0.8rem;">Manual Only</span>`;
+
+      const lastRunTimeStr = s.lastRunTime
+        ? new Date(s.lastRunTime).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+        : "Never";
+      const durationStr = typeof s.lastDurationMs === "number" ? `${s.lastDurationMs} ms` : "—";
+
+      let statusBadge = `<span class="badge badge-muted">⚪ Idle</span>`;
+      if (s.isExecuting || s.lastStatus === "running") {
+        statusBadge = `<span class="badge badge-warning">⏳ Running...</span>`;
+      } else if (s.lastStatus === "success") {
+        statusBadge = `<span class="badge badge-success">🟢 Success (0)</span>`;
+      } else if (s.lastStatus === "error") {
+        statusBadge = `<span class="badge badge-danger">🔴 Failed (${s.lastExitCode ?? 1})</span>`;
+      }
+
+      const previewOut = s.lastOutput
+        ? escapeHtml(s.lastOutput.split(/\r?\n/)[0].slice(0, 65))
+        : "No output recorded yet";
+
+      return `
+        <tr>
+          <td>
+            <div style="font-weight: 700; color: var(--text-primary);">${escapeHtml(s.name)}</div>
+            <div style="font-size: 0.73rem; color: var(--text-muted);">${s.size} bytes ${s.args ? `| args: <code>${escapeHtml(s.args)}</code>` : ''}</div>
+          </td>
+          <td><span class="badge ${extBadgeClass}">${extUpper}</span></td>
+          <td>
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+              <input type="text" class="form-control cron-inline-schedule-input" data-script="${escapeHtml(s.name)}" value="${escapeHtml(s.scheduleRaw || 'manual')}" style="padding: 4px 8px; font-size: 0.8rem; width: 155px;" title="e.g. 09:30, 18:00 or every 15m or manual">
+              <button class="btn btn-secondary btn-sm cron-save-inline-btn" data-script="${escapeHtml(s.name)}" title="Save schedule to crons/schedule.txt" style="padding: 4px 8px;">💾</button>
+            </div>
+            <div>${schedBadge} ${s.parsedSchedule?.autoCliq ? '<span class="badge badge-escalation" title="Auto-sends output to Cliq">💬 Cliq</span>' : ''}</div>
+          </td>
+          <td>${nextRunDisplay}</td>
+          <td>
+            <div style="font-size: 0.82rem; font-weight: 600;">${lastRunTimeStr}</div>
+            <div style="font-size: 0.74rem; color: var(--accent-amber);">⏱️ Run time: ${durationStr} (${s.runCount || 0} runs)</div>
+          </td>
+          <td>
+            <div style="margin-bottom: 4px;">${statusBadge}</div>
+            <div style="font-size: 0.74rem; color: var(--text-secondary); font-family: Consolas, monospace; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(s.lastOutput)}">${previewOut}</div>
+          </td>
+          <td>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button class="btn btn-primary btn-sm cron-run-now-btn" data-script="${escapeHtml(s.name)}" ${s.isExecuting ? 'disabled' : ''}>
+                ${s.isExecuting ? '⏳' : '▶️ Run'}
+              </button>
+              <button class="btn btn-secondary btn-sm cron-inspect-btn" data-script="${escapeHtml(s.name)}" title="View/Edit Script & Full Output">
+                📄 Code/Log
+              </button>
+              <button class="btn btn-success btn-sm cron-cliq-btn" data-script="${escapeHtml(s.name)}" title="Broadcast last output to Zoho Cliq" style="padding: 5px 8px;">
+                💬
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    // Attach inline listeners
+    cronsTableBody.querySelectorAll(".cron-save-inline-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const scriptName = btn.getAttribute("data-script");
+        const inputEl = cronsTableBody.querySelector(`.cron-inline-schedule-input[data-script="${CSS.escape(scriptName)}"]`);
+        const newRule = inputEl ? inputEl.value.trim() : "manual";
+        await updateSingleScriptSchedule(scriptName, newRule);
+      });
+    });
+
+    cronsTableBody.querySelectorAll(".cron-inline-schedule-input").forEach(inp => {
+      inp.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter") {
+          const scriptName = inp.getAttribute("data-script");
+          await updateSingleScriptSchedule(scriptName, inp.value.trim());
+          inp.blur();
+        }
+      });
+    });
+
+    cronsTableBody.querySelectorAll(".cron-run-now-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const scriptName = btn.getAttribute("data-script");
+        await triggerCronScriptNow(scriptName, btn);
+      });
+    });
+
+    cronsTableBody.querySelectorAll(".cron-inspect-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const scriptName = btn.getAttribute("data-script");
+        await openCronScriptModal(scriptName);
+      });
+    });
+
+    cronsTableBody.querySelectorAll(".cron-cliq-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const scriptName = btn.getAttribute("data-script");
+        const sObj = cronsState.scripts.find(x => x.name === scriptName);
+        if (!sObj) return;
+        const msg = `⏰ *Cron Script Report: ${sObj.name}*\n🕒 *Last Run:* ${sObj.lastRunTime ? new Date(sObj.lastRunTime).toLocaleString('en-IN') : 'Never'}\n⏱️ *Run Duration:* ${sObj.lastDurationMs ?? 0}ms | *Status:* ${(sObj.lastStatus || 'idle').toUpperCase()}\n\`\`\`\n${sObj.lastOutput || '(No console output yet)'}\n\`\`\``;
+        openCliqPreviewModal(`Broadcast ${sObj.name} Output to Cliq`, msg, async () => {
+          await sendCliqNotification(msg);
+        });
+      });
+    });
+  }
+
+  function renderCronsHistory() {
+    if (!cronsHistoryList) return;
+    if (!cronsState.history || cronsState.history.length === 0) {
+      cronsHistoryList.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 20px;">No script executions recorded yet. Click "▶️ Run" on any script to record its run time!</div>`;
+      return;
+    }
+
+    cronsHistoryList.innerHTML = cronsState.history.slice(0, 40).map(h => {
+      const statusColor = h.status === "success" ? "var(--accent-emerald)" : "var(--accent-rose)";
+      const icon = h.status === "success" ? "🟢" : "🔴";
+      return `
+        <div style="padding: 8px 10px; border-bottom: 1px dashed rgba(148, 163, 184, 0.12); display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+            <span>${icon} <strong style="color: var(--text-primary);">${escapeHtml(h.scriptName)}</strong> <span style="color: var(--text-muted);">(${escapeHtml(h.triggerSource)})</span></span>
+            <span>
+              <strong style="color: var(--accent-amber);">⏱️ ${h.durationMs} ms</strong> |
+              <span style="color: ${statusColor}; font-weight: 700;">Exit ${h.exitCode}</span> |
+              <span style="color: var(--text-secondary);">${escapeHtml(h.istTime)}</span>
+            </span>
+          </div>
+          <div style="color: var(--text-secondary); font-size: 0.74rem; white-space: pre-wrap; background: rgba(0,0,0,0.25); padding: 4px 8px; border-radius: 4px;">${escapeHtml(h.output)}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function updateSingleScriptSchedule(scriptName, scheduleRaw) {
+    try {
+      const res = await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update_script_schedule", scriptName, scheduleRaw })
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        saveLocalCronBackup(scriptName, scheduleRaw);
+        showToast(`Schedule for ${scriptName} saved to crons/schedule.txt!`, "success");
+        await fetchCronsStatus(true);
+      } else {
+        showToast(data.error || "Failed to update schedule", "error");
+      }
+    } catch (e) {
+      showToast(`Error updating schedule: ${e.message}`, "error");
+    }
+  }
+
+  async function triggerCronScriptNow(scriptName, btnEl) {
+    try {
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = "⏳ Running...";
+      }
+      showToast(`Executing ${scriptName}...`, "info");
+      const res = await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run_now", scriptName })
+      });
+      const data = await res.json();
+      await fetchCronsStatus(true);
+      if (data.status === "success" && data.result) {
+        const r = data.result;
+        if (r.status === "success") {
+          showToast(`✅ ${scriptName} finished in ${r.durationMs}ms! Recorded to run_history.log.`, "success");
+        } else {
+          showToast(`❌ ${scriptName} exited with code ${r.exitCode} (${r.durationMs}ms).`, "error");
+        }
+      }
+    } catch (e) {
+      showToast(`Execution error: ${e.message}`, "error");
+    }
+  }
+
+  async function openCronScriptModal(scriptName = null) {
+    if (!cronScriptModal) return;
+    if (!scriptName) {
+      cronModalTitle.textContent = "➕ Create New .bat / .awk Script in crons/";
+      cronModalFilename.value = "my_task.bat";
+      cronModalFilename.readOnly = false;
+      cronModalSchedule.value = "09:30, 18:00";
+      cronModalCode.value = "@echo off\necho Running custom batch job at %DATE% %TIME%\nexit /b 0\n";
+      cronModalOutput.textContent = "(Save and click 'Save & Run Now' to test output)";
+      cronScriptModal.classList.add("active");
+      return;
+    }
+
+    const sObj = cronsState.scripts.find(x => x.name === scriptName);
+    cronModalTitle.textContent = `📄 Script & Output: ${scriptName}`;
+    cronModalFilename.value = scriptName;
+    cronModalFilename.readOnly = true;
+    cronModalSchedule.value = sObj ? (sObj.scheduleRaw || "manual") : "manual";
+    cronModalOutput.textContent = sObj?.lastOutput || "(No execution output recorded yet)";
+    cronModalCode.value = "Loading script content...";
+    cronScriptModal.classList.add("active");
+
+    try {
+      const res = await fetch(`/api/crons/script-content?name=${encodeURIComponent(scriptName)}`);
+      const data = await res.json();
+      if (data.status === "success") {
+        cronModalCode.value = data.content;
+      } else {
+        cronModalCode.value = `# Could not load file: ${data.error}`;
+      }
+    } catch (e) {
+      cronModalCode.value = `# Error loading file: ${e.message}`;
+    }
+  }
+
+  async function saveModalScript(andRun = false) {
+    const scriptName = cronModalFilename.value.trim();
+    const scheduleRaw = cronModalSchedule.value.trim() || "manual";
+    const content = cronModalCode.value;
+
+    if (!scriptName) {
+      showToast("Please provide a script filename (.bat or .awk).", "warning");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_script_file",
+          scriptName,
+          scheduleRaw,
+          content
+        })
+      });
+      const data = await res.json();
+      if (data.status !== "success") {
+        showToast(data.error || "Could not save script", "error");
+        return;
+      }
+      saveLocalCronBackup(scriptName, scheduleRaw, content);
+      showToast(`Saved ${scriptName} and updated crons/schedule.txt!`, "success");
+      await fetchCronsStatus(true);
+
+      if (andRun) {
+        cronModalOutput.textContent = "⏳ Executing script...";
+        const runRes = await fetch("/api/crons/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "run_now", scriptName })
+        });
+        const runData = await runRes.json();
+        await fetchCronsStatus(true);
+        if (runData.result) {
+          cronModalOutput.textContent = `[Exit Code: ${runData.result.exitCode} | Run Time: ${runData.result.durationMs}ms]\n\n${runData.result.output}`;
+        }
+      } else {
+        cronScriptModal.classList.remove("active");
+      }
+    } catch (e) {
+      showToast(`Error saving script: ${e.message}`, "error");
+    }
+  }
+
+  cronModalSaveBtn?.addEventListener("click", () => saveModalScript(false));
+  cronModalRunBtn?.addEventListener("click", () => saveModalScript(true));
+  cronsNewScriptBtn?.addEventListener("click", () => openCronScriptModal(null));
+  cronsRescanBtn?.addEventListener("click", () => fetchCronsStatus(false));
+  cronsSearchInput?.addEventListener("input", () => renderCronsScriptsTable());
+
+  cronsToggleEngineBtn?.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle_engine", isRunning: !cronsState.isRunning })
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        cronsState.isRunning = data.isRunning;
+        renderCronsTab();
+        showToast(cronsState.isRunning ? "24/7 Background Cron Engine resumed!" : "Background Cron Engine paused.", "info");
+      }
+    } catch (e) {
+      showToast(`Error toggling cron engine: ${e.message}`, "error");
+    }
+  });
+
+  cronsSaveScheduleFileBtn?.addEventListener("click", async () => {
+    try {
+      const content = cronsScheduleTextarea.value;
+      const res = await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save_schedule_file", content })
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        showToast("crons/schedule.txt saved & synced with 24/7 Cron Engine!", "success");
+        await fetchCronsStatus(true);
+      }
+    } catch (e) {
+      showToast(`Failed to save schedule.txt: ${e.message}`, "error");
+    }
+  });
+
+  cronsClearHistoryBtn?.addEventListener("click", async () => {
+    try {
+      await fetch("/api/crons/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear_history" })
+      });
+      await fetchCronsStatus(true);
+      showToast("Cleared crons/run_history.log.", "info");
+    } catch (e) {}
+  });
+
+  // Poll crons status every 3 seconds when authenticated so new files dropped in crons/ appear automatically
+  setInterval(() => {
+    if (state.isAuthenticated) {
+      fetchCronsStatus(true);
+    }
+  }, 3000);
+
   async function initDashboard() {
     renderFrontlineUserTags();
     loadSettingsForm();
     await syncBackendPollerStatus();
+    await fetchCronsStatus(true);
     fetchAvailabilityData();
     fetchFrontlineData();
     await fetchGroupTasksData();

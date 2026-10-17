@@ -79,6 +79,10 @@
         ⏳ Pending by Assignee
         <span class="tab-badge">Tasks</span>
       </button>
+      <button class="tab-button" data-tab="crons">
+        ⏰ Crons
+        <span id="tab-crons-badge" class="tab-badge">24/7 Auto</span>
+      </button>
       <button class="tab-button" data-tab="settings">
         ⚙️ Settings & Config
       </button>
@@ -351,7 +355,154 @@
       <div id="tasks-pending-grid" class="grid-auto"></div>
     </div>
 
-    <!-- TAB 5: SETTINGS & CONFIGURATION -->
+    <!-- TAB 5: CRONS & AUTO-DISCOVERED SCRIPTS (.BAT / .AWK) -->
+    <div id="tab-crons" class="tab-pane">
+      <!-- Quick Stats -->
+      <div class="grid-4" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-blue);">📂</div>
+          <div class="stat-info">
+            <div id="stat-crons-total" class="stat-value">0</div>
+            <div class="stat-label">Auto-Captured Scripts</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">⏰</div>
+          <div class="stat-info">
+            <div id="stat-crons-scheduled" class="stat-value" style="color: var(--accent-emerald);">0</div>
+            <div class="stat-label">Active Scheduled Crons</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(192, 132, 252, 0.15); color: var(--accent-purple);">⚡</div>
+          <div class="stat-info">
+            <div id="stat-crons-runs" class="stat-value" style="color: var(--accent-purple);">0</div>
+            <div class="stat-label">Recorded Executions</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: rgba(251, 191, 36, 0.15); color: var(--accent-amber);">🖥️</div>
+          <div class="stat-info">
+            <div id="stat-crons-engine" class="stat-value" style="font-size: 1.15rem; color: var(--accent-emerald);">24/7 Active</div>
+            <div class="stat-label">Background Server Mode</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Zero-Code Auto-Discovery Info Card -->
+      <div class="card" style="padding: 14px 18px; margin-bottom: 16px; background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.25);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <span id="cron-engine-badge" class="badge badge-success" style="font-size: 0.8rem; padding: 5px 10px;">🟢 24/7 Background Cron Engine: Running (Works Even With Browser Closed)</span>
+              <span style="font-size: 0.8rem; color: var(--text-secondary);">
+                📂 Drop-in Folder: <code id="crons-folder-path" style="color: var(--accent-blue); background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">crons/</code>
+              </span>
+              <span style="font-size: 0.8rem; color: var(--text-secondary);">
+                📝 Schedule File: <code style="color: var(--accent-amber); background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">crons/schedule.txt</code>
+              </span>
+              <span style="font-size: 0.8rem; color: var(--text-secondary);">
+                📜 Recorded Run Log: <code style="color: var(--accent-emerald); background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">crons/run_history.log</code>
+              </span>
+            </div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+              💡 <strong>Zero-Code Auto-Capture:</strong> Simply drop any <code>.awk</code>, <code>.bat</code>, <code>.cmd</code>, or <code>.ps1</code> file into the <code>crons/</code> folder and add its run time in <code>crons/schedule.txt</code> (e.g. <code>my_job.awk = 09:30, 18:00</code> or <code>backup.bat = every 15m</code>). The Node.js server auto-detects and runs it 24/7 even when this webpage is closed!
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <button id="crons-toggle-engine-btn" class="btn btn-warning btn-sm">
+              ⏸️ Pause Engine
+            </button>
+            <button id="crons-new-script-btn" class="btn btn-secondary btn-sm">
+              ➕ Create Script
+            </button>
+            <button id="crons-rescan-btn" class="btn btn-primary btn-sm">
+              🔄 Rescan Folder Now
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Discovered Scripts & Schedule Table -->
+      <div class="card">
+        <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
+          <div class="card-title">
+            <span>⏰ Auto-Discovered Scripts & Run Schedules</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <input type="text" id="crons-search-input" class="form-control" style="width: 220px; padding: 5px 10px; font-size: 0.8rem;" placeholder="🔍 Filter script or schedule...">
+            <span style="font-size: 0.76rem; color: var(--text-muted);">
+              Formats: <code>09:30, 18:00</code> | <code>every 15m</code> | <code>*/30 * * * *</code> | <code>manual</code> (add <code>[cliq]</code> to auto-post output)
+            </span>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Script File</th>
+                <th>Type</th>
+                <th style="min-width: 240px;">Schedule Rule (Synced with schedule.txt)</th>
+                <th>Next Auto Run</th>
+                <th>Last Run & Duration</th>
+                <th>Last Status & Output</th>
+                <th style="width: 210px;">Quick Actions</th>
+              </tr>
+            </thead>
+            <tbody id="crons-scripts-table-body">
+              <tr>
+                <td colspan="7" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                  Scanning <code>crons/</code> folder for <code>.bat</code> and <code>.awk</code> scripts...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Bottom Grid: 1) Single Schedule File (schedule.txt)  &  2) Recorded Run-Time History File (run_history.log) -->
+      <div class="grid-2">
+        <!-- Live schedule.txt Editor -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📝 Master Schedule File (<code>crons/schedule.txt</code>)</span>
+            </div>
+            <button id="crons-save-schedule-file-btn" class="btn btn-primary btn-sm">
+              💾 Save schedule.txt
+            </button>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 10px;">
+            Edit directly here OR in Notepad at <code>crons/schedule.txt</code>. Changes on disk are auto-captured every 3 seconds without restarting!
+          </p>
+          <textarea id="crons-schedule-file-textarea" class="form-control" rows="12" style="font-family: Consolas, monospace; font-size: 0.82rem; line-height: 1.45; white-space: pre;"></textarea>
+        </div>
+
+        <!-- Recorded Run-Time Log File (crons/run_history.log) -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📜 Recorded Run-Times File (<code>crons/run_history.log</code>)</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button id="crons-clear-history-btn" class="btn btn-secondary btn-sm" style="font-size: 0.75rem;">
+                🗑️ Clear Log
+              </button>
+            </div>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 10px;">
+            Every scheduled & manual execution's timestamp, run duration (ms), exit code, and output is permanently recorded in <code>crons/run_history.log</code>:
+          </p>
+          <div id="crons-history-list" style="max-height: 295px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-primary); padding: 10px; font-family: Consolas, monospace; font-size: 0.78rem;">
+            <div style="color: var(--text-muted); text-align: center; padding: 20px;">No script executions recorded yet. Click "▶️ Run Now" on any script to test!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 6: SETTINGS & CONFIGURATION -->
     <div id="tab-settings" class="tab-pane">
       <div class="grid-2">
         <!-- Zoho API Credentials -->
@@ -588,6 +739,43 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary modal-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRON SCRIPT EDITOR & OUTPUT MODAL -->
+  <div id="cron-script-modal" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 780px;">
+      <div class="modal-header">
+        <h3 id="cron-script-modal-title">📄 Script Editor & Console Output</h3>
+        <button class="btn-icon modal-close-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px;">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 540px; overflow-y: auto;">
+        <div class="grid-2" style="gap: 12px; margin-bottom: 12px;">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Script File Name (<code>.bat</code>, <code>.awk</code>, <code>.ps1</code>, <code>.cmd</code>)</label>
+            <input type="text" id="cron-modal-filename" class="form-control" placeholder="e.g. daily_report.awk or cleanup.bat">
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Schedule Rule (in <code>crons/schedule.txt</code>)</label>
+            <input type="text" id="cron-modal-schedule" class="form-control" placeholder="e.g. 09:30, 18:00 or every 15m or manual">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Script Source Code (Saved in <code>crons/</code> folder)</label>
+          <textarea id="cron-modal-code" class="form-control" rows="9" style="font-family: Consolas, monospace; font-size: 0.82rem; white-space: pre;"></textarea>
+        </div>
+
+        <div id="cron-modal-output-section">
+          <label class="form-label">Latest Recorded Execution Output</label>
+          <pre id="cron-modal-output" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; font-family: Consolas, monospace; font-size: 0.8rem; color: var(--accent-emerald); max-height: 160px; overflow-y: auto; white-space: pre-wrap;">(No execution output yet)</pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close-btn">Cancel</button>
+        <button id="cron-modal-run-btn" class="btn btn-warning">▶️ Save & Run Now</button>
+        <button id="cron-modal-save-btn" class="btn btn-primary">💾 Save Script & Schedule</button>
       </div>
     </div>
   </div>

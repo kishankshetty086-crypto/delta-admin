@@ -7,22 +7,35 @@ document.addEventListener("DOMContentLoaded", async () => {
   let activeConfig = JSON.parse(JSON.stringify(window.DEFAULT_CONFIG || {}));
 
   // 1. Check localStorage first
+  let parsedLocal = null;
   try {
     const savedLocal = localStorage.getItem("team_admin_monitor_config");
     if (savedLocal) {
-      const parsedLocal = JSON.parse(savedLocal);
+      parsedLocal = JSON.parse(savedLocal);
       activeConfig = { ...activeConfig, ...parsedLocal, zoho: { ...activeConfig.zoho, ...parsedLocal.zoho }, availability: { ...activeConfig.availability, ...parsedLocal.availability }, frontline: { ...activeConfig.frontline, ...parsedLocal.frontline }, tasks: { ...activeConfig.tasks, ...parsedLocal.tasks }, cliq: { ...activeConfig.cliq, ...parsedLocal.cliq } };
     }
   } catch (e) {}
 
-  // 2. Query server for authoritative live configuration
+  // 2. Query server for live configuration, preserving whichever config has the latest user _savedAt timestamp
   try {
     if (window.location.protocol.startsWith('http')) {
       const serverCfgRes = await fetch('/api/config');
       if (serverCfgRes.ok) {
         const serverCfg = await serverCfgRes.json();
         if (serverCfg && typeof serverCfg === 'object') {
-          activeConfig = { ...activeConfig, ...serverCfg, zoho: { ...activeConfig.zoho, ...serverCfg.zoho }, availability: { ...activeConfig.availability, ...serverCfg.availability }, frontline: { ...activeConfig.frontline, ...serverCfg.frontline }, tasks: { ...activeConfig.tasks, ...serverCfg.tasks }, cliq: { ...activeConfig.cliq, ...serverCfg.cliq } };
+          const localTime = parsedLocal?._savedAt || 0;
+          const serverTime = serverCfg._savedAt || 0;
+          if (localTime > serverTime) {
+            // Browser has newer user settings (e.g. after a fresh server build) -> push local settings back to server!
+            fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(activeConfig)
+            }).catch(() => {});
+          } else {
+            activeConfig = { ...activeConfig, ...serverCfg, zoho: { ...activeConfig.zoho, ...serverCfg.zoho }, availability: { ...activeConfig.availability, ...serverCfg.availability }, frontline: { ...activeConfig.frontline, ...serverCfg.frontline }, tasks: { ...activeConfig.tasks, ...serverCfg.tasks }, cliq: { ...activeConfig.cliq, ...serverCfg.cliq } };
+            localStorage.setItem("team_admin_monitor_config", JSON.stringify(activeConfig));
+          }
         }
       }
     }
@@ -1729,6 +1742,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function saveAppConfig() {
+    window.APP_CONFIG._savedAt = Date.now();
     localStorage.setItem("team_admin_monitor_config", JSON.stringify(window.APP_CONFIG));
     window.zohoClient.updateConfig(window.APP_CONFIG);
 

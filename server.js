@@ -2,17 +2,51 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { exec } = require('child_process');
 
 const PORT = process.env.PORT || 3500;
 const BASE_DIR = __dirname;
 const CONFIG_PATH = path.join(BASE_DIR, 'config', 'config.json');
+const REBUILD_VAULT_DIR = path.join(os.homedir(), '.delta-admin-crons-backup');
+const VAULT_CONFIG_PATH = path.join(REBUILD_VAULT_DIR, 'config.json');
+
+let currentConfig = {};
+
+function persistConfigToDisk(cfg) {
+  try {
+    cfg._savedAt = cfg._savedAt || Date.now();
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+    const jsFileContent = `window.DEFAULT_CONFIG = ${JSON.stringify(cfg, null, 2)};`;
+    fs.writeFileSync(path.join(BASE_DIR, 'config', 'config.js'), jsFileContent, 'utf8');
+    if (!fs.existsSync(REBUILD_VAULT_DIR)) fs.mkdirSync(REBUILD_VAULT_DIR, { recursive: true });
+    fs.writeFileSync(VAULT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+  } catch (e) {
+    console.warn("Could not persist config to disk/vault:", e.message);
+  }
+}
 
 function loadConfig() {
   try {
+    let repoCfg = null;
+    let vaultCfg = null;
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, '');
-      currentConfig = JSON.parse(raw);
+      repoCfg = JSON.parse(raw);
+    }
+    if (fs.existsSync(VAULT_CONFIG_PATH)) {
+      const rawV = fs.readFileSync(VAULT_CONFIG_PATH, 'utf8').replace(/^\uFEFF/, '');
+      vaultCfg = JSON.parse(rawV);
+    }
+    // If the user previously saved settings into the external vault, keep the vault settings even if a rebuild reset config/config.json
+    if (vaultCfg && (!repoCfg || (vaultCfg._savedAt || 0) >= (repoCfg._savedAt || 0))) {
+      currentConfig = { ...(repoCfg || {}), ...vaultCfg };
+      persistConfigToDisk(currentConfig);
+    } else if (repoCfg) {
+      currentConfig = repoCfg;
+      if (!fs.existsSync(VAULT_CONFIG_PATH)) {
+        persistConfigToDisk(currentConfig);
+      }
     }
   } catch (e) {
     console.warn("Could not load config.json:", e.message);
@@ -174,13 +208,10 @@ if (pollerState.isRunning) {
 // ==========================================
 // 24/7 AUTO-DISCOVERY CRONS & SCRIPT ENGINE (.bat / .awk / .ps1 / .sh)
 // ==========================================
-const os = require('os');
 const CRONS_DIR = path.join(BASE_DIR, 'crons');
 const SCHEDULE_FILE = path.join(CRONS_DIR, 'schedule.txt');
 const RUN_HISTORY_LOG = path.join(CRONS_DIR, 'run_history.log');
 const RUN_HISTORY_JSON = path.join(CRONS_DIR, 'run_history.json');
-// Rebuild-Safe Vault outside the repo folder so git pull / rebuilds NEVER wipe user scripts or schedules
-const REBUILD_VAULT_DIR = path.join(os.homedir(), '.delta-admin-crons-backup');
 const ALLOWED_SCRIPT_EXTS = new Set(['.bat', '.awk', '.cmd', '.ps1', '.sh']);
 
 if (!fs.existsSync(CRONS_DIR)) {
@@ -1229,14 +1260,9 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // Persist poller configuration to disk
-      try {
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
-        const jsFileContent = `window.DEFAULT_CONFIG = ${JSON.stringify(currentConfig, null, 2)};`;
-        fs.writeFileSync(path.join(BASE_DIR, 'config', 'config.js'), jsFileContent, 'utf8');
-      } catch (e) {
-        console.warn("Could not persist poller config:", e.message);
-      }
+      // Persist poller configuration to disk & external Rebuild-Safe Vault
+      currentConfig._savedAt = Date.now();
+      persistConfigToDisk(currentConfig);
 
       const now = Date.now();
       let remainingSec = 0;
@@ -1265,10 +1291,9 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/config') {
       if (req.method === 'POST') {
         const newCfg = JSON.parse(reqBody || '{}');
+        newCfg._savedAt = newCfg._savedAt || Date.now();
         currentConfig = newCfg;
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2), 'utf8');
-        const jsFileContent = `window.DEFAULT_CONFIG = ${JSON.stringify(currentConfig, null, 2)};`;
-        fs.writeFileSync(path.join(BASE_DIR, 'config', 'config.js'), jsFileContent, 'utf8');
+        persistConfigToDisk(currentConfig);
         cachedToken = null;
 
         // Synchronize poller settings with new config
